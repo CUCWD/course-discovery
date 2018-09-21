@@ -345,7 +345,7 @@ class Course(TimeStampedModel):
     )
     key = models.CharField(max_length=255)
     title = models.CharField(max_length=255, default=None, null=True, blank=True)
-    short_description = models.CharField(max_length=350, default=None, null=True, blank=True)
+    short_description = models.TextField(default=None, null=True, blank=True)
     full_description = models.TextField(default=None, null=True, blank=True)
     authoring_organizations = SortedManyToManyField(Organization, blank=True, related_name='authored_courses')
     sponsoring_organizations = SortedManyToManyField(Organization, blank=True, related_name='sponsored_courses')
@@ -449,6 +449,13 @@ class Course(TimeStampedModel):
             QuerySet
         """
         query = clean_query(query)
+
+        if query == '(*)':
+            # Early-exit optimization. Wildcard searching is very expensive in elasticsearch. And since we just
+            # want everything, we don't need to actually query elasticsearch at all.
+            # No point logging if log_course_search_queries is enabled for this wildcard, so skip that too.
+            return cls.objects.all()
+
         results = SearchQuerySet().models(cls).raw_search(query)
         ids = {result.pk for result in results}
 
@@ -784,7 +791,14 @@ class CourseRun(TimeStampedModel):
             SearchQuerySet
         """
         query = clean_query(query)
-        return SearchQuerySet().models(cls).raw_search(query).load_all()
+        queryset = SearchQuerySet().models(cls)
+
+        if query == '(*)':
+            # Early-exit optimization. Wildcard searching is very expensive in elasticsearch. And since we just
+            # want everything, we don't need to actually query elasticsearch at all.
+            return queryset.load_all()
+
+        return queryset.raw_search(query).load_all()
 
     def __str__(self):
         return '{key}: {title}'.format(key=self.key, title=self.title)
@@ -1392,6 +1406,17 @@ class Degree(Program):
         blank=True,
         null=True
     )
+    micromasters_background_image = StdImageField(
+        upload_to=UploadToAutoSlug(populate_from='uuid', path='media/degree_marketing/mm_images/'),
+        blank=True,
+        null=True,
+        variations={
+            'large': (1440, 480),
+            'medium': (726, 242),
+            'small': (435, 145),
+        },
+        help_text=_('Customized background image for the MicroMasters section.'),
+    )
     search_card_ranking = models.CharField(
         help_text=_('Ranking display for search card (e.g. "#1 in the U.S."'),
         max_length=50,
@@ -1519,10 +1544,10 @@ class Curriculum(TimeStampedModel):
     marketing_text_brief = models.TextField(
         null=True,
         blank=True,
-        max_length=300,
+        max_length=750,
         help_text=_(
             """A high-level overview of the degree\'s courseware. The "brief"
-            text is the first 300 characters of "marketing_text" and must be
+            text is the first 750 characters of "marketing_text" and must be
             valid HTML."""
         ),
     )
