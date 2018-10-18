@@ -520,6 +520,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         """
         data = super().serialize_obj(obj)
         data['title'] = obj.title
+        data['slug'] = obj.slug
 
         # try:
         #     data['fields']['hero'] = self.media_id(obj)
@@ -539,7 +540,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         data['fields'][self.post_lookup_meta_group].update(
             {
                 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
-                'card_image': obj.card_image_url
+                'card_image_url': obj.card_image_url
             })
 
 

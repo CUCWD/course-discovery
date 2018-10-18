@@ -197,17 +197,18 @@ class CoursesApiDataLoader(AbstractDataLoader):
         }
 
         # When using a marketing site, only dates (excluding start) should come from the Course API.
-        if not self.partner.has_marketing_site:
-            defaults.update({
-                'start': self.parse_date(body['start']),
-                'card_image_url': body['media'].get('image', {}).get('raw'),
-                'title_override': body['name'],
-                'short_description_override': body['short_description'],
-                'video': self.get_courserun_video(body),
-                'status': CourseRunStatus.Published,
-                'pacing_type': self.get_pacing_type(body),
-                'mobile_available': body.get('mobile_available') or False,
-            })
+        # if not self.partner.has_marketing_site:
+        defaults.update({
+            'start': self.parse_date(body['start']),
+            'card_image_url': body['media'].get('image', {}).get('raw'),
+            'title_override': body['name'],
+            'short_description_override': body['short_description'],
+            'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
+            'video': self.get_courserun_video(body),
+            'status': CourseRunStatus.Published,
+            'pacing_type': self.get_pacing_type(body),
+            'mobile_available': body.get('mobile_available') or False,
+        })
 
         if course:
             defaults['course'] = course

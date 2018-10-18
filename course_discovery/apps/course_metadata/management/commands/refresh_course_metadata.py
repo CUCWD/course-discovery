@@ -150,10 +150,10 @@ class Command(BaseCommand):
                 (
                     (CoursesApiDataLoader, partner.courses_api_url, max_workers),
                 ),
-                (
-                    (EcommerceApiDataLoader, partner.ecommerce_api_url, 1),
-                    (ProgramsApiDataLoader, partner.programs_api_url, max_workers),
-                )
+                # (
+                #     (EcommerceApiDataLoader, partner.ecommerce_api_url, 1),
+                #     (ProgramsApiDataLoader, partner.programs_api_url, max_workers),
+                # )
             )
 
             if waffle.switch_is_active('parallel_refresh_pipeline'):
