@@ -76,7 +76,7 @@ class CourseAdmin(admin.ModelAdmin):
 @admin.register(CourseRun)
 class CourseRunAdmin(admin.ModelAdmin):
     inlines = (SeatInline,)
-    list_display = ('uuid', 'key', 'title',)
+    list_display = ('uuid', 'wordpress_post_id', 'key', 'title',)
     list_filter = (
         'course__partner',
         'hidden',
@@ -84,8 +84,8 @@ class CourseRunAdmin(admin.ModelAdmin):
         'status',
     )
     ordering = ('key',)
-    readonly_fields = ('uuid',)
-    search_fields = ('uuid', 'key', 'title_override', 'course__title', 'slug',)
+    readonly_fields = ('uuid', 'wordpress_post_id')
+    search_fields = ('uuid', 'wordpress_post_id', 'key', 'title_override', 'course__title', 'slug',)
     save_error = False
 
     def response_change(self, request, obj):

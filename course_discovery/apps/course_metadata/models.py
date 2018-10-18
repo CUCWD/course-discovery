@@ -26,6 +26,11 @@ from course_discovery.apps.course_metadata.publishers import (
     CourseRunMarketingSitePublisher,
     ProgramMarketingSitePublisher
 )
+from course_discovery.apps.course_metadata.publishers_wordpress import (
+    CourseRunMarketingSiteWordpressPublisher,
+    ProgramMarketingSiteWordpressPublisher
+)
+
 from course_discovery.apps.course_metadata.query import CourseQuerySet, CourseRunQuerySet, ProgramQuerySet
 from course_discovery.apps.course_metadata.utils import UploadToFieldNamePath, clean_query, custom_render_variations
 from course_discovery.apps.ietf_language_tags.models import LanguageTag
@@ -348,6 +353,13 @@ class Course(TimeStampedModel):
 class CourseRun(TimeStampedModel):
     """ CourseRun model. """
     uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+    # wordpress_media_id = models.BigIntegerField(
+    #     editable=True, null=True, blank=True,
+    #     help_text=_('This is the Wordpress Media id generated from the marketing frontend. Override here if it selected'
+    #                 ' the wrong image'))
     course = models.ForeignKey(Course, related_name='course_runs')
     key = models.CharField(max_length=255, unique=True)
     status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=CourseRunStatus.choices,
@@ -601,6 +613,21 @@ class CourseRun(TimeStampedModel):
     def __str__(self):
         return '{key}: {title}'.format(key=self.key, title=self.title)
 
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": CourseRunMarketingSitePublisher,
+            "wordpress": CourseRunMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
     def save(self, *args, **kwargs):
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_publishable = (
@@ -611,7 +638,7 @@ class CourseRun(TimeStampedModel):
         )
 
         if is_publishable:
-            publisher = CourseRunMarketingSitePublisher(self.course.partner)
+            publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
             previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
 
             with transaction.atomic():
