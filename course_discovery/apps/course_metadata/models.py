@@ -719,13 +719,54 @@ class Chapter(TimeStampedModel):
         help_text=_(
             "Goal description specific for this chapter within the course."))
 
-    # TODO Need to add in `sequentials = SortedManyToManyField(Sequential, related_name='chapters')`
+    sequentials = SortedManyToManyField('Sequential', related_name='chapters')
 
     slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     hidden = models.BooleanField(default=False)
 
     def __str__(self):
         return '{location}: {title}'.format(location=self.location, title=self.title)
+
+
+class Sequential(TimeStampedModel):
+    """ Sequential model. """
+    location = models.CharField(max_length=255, unique=True)
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    lms_web_url = models.URLField(null=True, blank=True)
+    min_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this sequential.'))
+
+    max_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this sequential.'))
+
+    title = models.CharField(max_length=255, default=None, null=True, blank=True)
+
+    objectives = SortedManyToManyField('Objective', related_name='sequentials')
+
+    """ 
+    Todo: May want to consider adding in the additional fields provided by the Block REST API for this type.
+    format: Activity, Assessment, Exam
+    graded: true, false
+    """
+
+    slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    hidden = models.BooleanField(default=False)
+
+    def __str__(self):
+        return '{location}: {title}'.format(location=self.location, title=self.title)
+
+
+class Objective(TimeStampedModel):
+    """ Objective model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    description = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_("Description specific for this objective."))
+
+    def __str__(self):
+        return '{description}'.format(description=self.description)
 
 
 class Endorsement(TimeStampedModel):
