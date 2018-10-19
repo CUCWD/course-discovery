@@ -415,6 +415,8 @@ class CourseRun(TimeStampedModel):
         help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
     )
 
+    chapters = SortedManyToManyField('Chapter', related_name='course_runs')
+
     objects = CourseRunQuerySet.as_manager()
 
     def _enrollable_paid_seats(self):
@@ -696,6 +698,34 @@ class Seat(TimeStampedModel):
         unique_together = (
             ('course_run', 'type', 'currency', 'credit_provider')
         )
+
+
+class Chapter(TimeStampedModel):
+    """ Chapter model. """
+    location = models.CharField(max_length=255, unique=True)
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    lms_web_url = models.URLField(null=True, blank=True)
+    min_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter.'))
+
+    max_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter.'))
+
+    title = models.CharField(max_length=255, default=None, null=True, blank=True)
+    goal_override = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_(
+            "Goal description specific for this chapter within the course."))
+
+    # TODO Need to add in `sequentials = SortedManyToManyField(Sequential, related_name='chapters')`
+
+    slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    hidden = models.BooleanField(default=False)
+
+    def __str__(self):
+        return '{location}: {title}'.format(location=self.location, title=self.title)
 
 
 class Endorsement(TimeStampedModel):
