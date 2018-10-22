@@ -1084,6 +1084,19 @@ class Objective(TimeStampedModel):
     def __str__(self):
         return '{description}'.format(description=self.description)
 
+    def save(self, *args, **kwargs):
+        super(Objective, self).save(*args, **kwargs)
+        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+        # at the Chapter level with correct Sequential includes.
+        for related_sequential in self.sequentials.all():
+            related_sequential.save()
+
+            logger.info(
+                "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
+                    related_sequential.title, related_sequential.location, self.description
+                )
+            )
+
 
 class Endorsement(TimeStampedModel):
     endorser = models.ForeignKey(Person, blank=False, null=False)
