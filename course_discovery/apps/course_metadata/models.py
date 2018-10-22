@@ -1040,6 +1040,17 @@ class Sequential(TimeStampedModel):
 
         publisher.publish_obj(self, previous_obj=previous_obj)
 
+        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+        # at the Chapter level with correct Sequential includes.
+        for related_chapter in self.chapters.all():
+            related_chapter.save()
+
+            logger.info(
+                "Saved related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
+                    related_chapter.title, related_chapter.location, self.title, self.location
+                )
+            )
+
     def save(self, *args, **kwargs):
         #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
         suppress_publication = kwargs.pop('suppress_publication', False)
