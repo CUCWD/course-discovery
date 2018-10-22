@@ -120,6 +120,7 @@ class BaseMarketingSiteWordpressPublisher:
                     self.post_lookup_field: str(getattr(obj, self.unique_field)),
                     'date_modified': str(datetime.datetime.utcnow()),
                     'modified_by': self.client.user_id,
+                    'hidden': 1 if getattr(obj, 'hidden') else 0
                 }
             }
         }
