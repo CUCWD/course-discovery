@@ -285,6 +285,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
     def format_sequential_data(self, block_body, course_id):
         defaults = {
+            'course_run': self.get_course_run(body={"id": course_id}),
             'location': block_body['id'],
             'lms_web_url': block_body['lms_web_url'],
             'title': self.get_title_name(block_body['display_name']),
