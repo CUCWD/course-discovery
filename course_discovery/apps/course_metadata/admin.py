@@ -80,7 +80,7 @@ class CourseAdmin(admin.ModelAdmin):
 class CourseRunAdmin(admin.ModelAdmin):
     form = CourseRunAdminForm
     inlines = (SeatInline,)
-    list_display = ('uuid', 'wordpress_post_id', 'key', 'title',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'key', 'title',)
     list_filter = (
         'course__partner',
         'hidden',
@@ -125,8 +125,8 @@ class CourseRunAdmin(admin.ModelAdmin):
 @admin.register(Chapter)
 class ChapterAdmin(admin.ModelAdmin):
     form = ChapterAdminForm
-    list_display = ('uuid', 'title', 'slug', 'course_order', 'location')
-    list_filter = ('title',)
+    list_display = ('uuid', 'hidden', 'title', 'slug', 'course_order', 'location')
+    list_filter = ('hidden', 'title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid',)
     search_fields = ('uuid', 'title', 'slug', 'location',)
@@ -141,8 +141,8 @@ class ChapterAdmin(admin.ModelAdmin):
 @admin.register(Sequential)
 class SequentialAdmin(admin.ModelAdmin):
     form = SequentialAdminForm
-    list_display = ('uuid', 'wordpress_post_id', 'title', 'slug', 'chapter_order', 'location',)
-    list_filter = ('title',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'title', 'slug', 'chapter_order', 'location',)
+    list_filter = ('hidden', 'title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid', 'course_run', 'wordpress_post_id',)
     search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
