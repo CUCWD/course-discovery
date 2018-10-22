@@ -65,6 +65,7 @@ class BaseMarketingSiteWordpressPublisher:
         self.rest_api_base = '{base}/wp/v2'.format(base=self.client.api_url) # urljoin(self.client.api_url, '/acf/v3/')
         self.media_api_base = '{base}/media'.format(base=self.rest_api_base)
         self.post_course_api_base = '{base}/course'.format(base=self.rest_api_base) #urljoin(self.rest_api_base, 'course')
+        self.post_module_api_base = '{base}/module'.format(base=self.rest_api_base)
         self.post_lesson_api_base = '{base}/lesson'.format(base=self.rest_api_base)
         # self.node_api_base = urljoin(self.client.api_url, '/node.json')
         # self.alias_api_base = urljoin(self.client.api_url, '/admin/config/search/path')
@@ -73,6 +74,7 @@ class BaseMarketingSiteWordpressPublisher:
         # Define the post_base based on publisher type
         switcher = {
             "CourseRunMarketingSiteWordpressPublisher" : self.post_course_api_base,
+            "ChapterMarketingSiteWordpressPublisher" : self.post_module_api_base,
             "SequentialMarketingSiteWordpressPublisher" : self.post_lesson_api_base
         }
         self.post_base = switcher.get(self.__class__.__name__, None)
@@ -275,8 +277,8 @@ class BaseMarketingSiteWordpressPublisher:
                 except (KeyError) as error:
                     raise PostLookupError({'response_status': 'Could not locate Wordpress post id',
                                        obj.__class__: getattr(obj, self.unique_field)})
-        else:
-            raise PostLookupError({'response_status': 'Could not locate Wordpress post id for course', 'course_id': getattr(obj, self.unique_field)})
+
+        raise PostLookupError({'response_status': 'Could not locate Wordpress post id for course', 'course_id': getattr(obj, self.unique_field)})
 
 
     # def create_node(self, node_data):
@@ -501,10 +503,9 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        logger.info('Publishing lessons [%s] to marketing site (Wordpress) ...', obj.location)
+        logger.info('Publishing lesson [%s] to marketing site (Wordpress) ...', obj.location)
 
         # if previous_obj and obj.status != previous_obj.status:
-
         post_data = self.serialize_obj(obj)
 
         try:
@@ -526,7 +527,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
             obj (Sequential): Sequential instance to be published.
 
         Returns:
-            dict: Data to PUT to the Wordpress API (/course)
+            dict: Data to PUT (edit) / POST (create) to the Wordpress API (/course)
         """
         data = super().serialize_obj(obj)
         data['title'] = obj.title
@@ -537,6 +538,92 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
         for objective in obj.objectives.all():
             objectives.append({ "objective": objective.description })
         data['fields']['objectives'] = objectives
+
+        data['fields'].setdefault('effort', {}).update(
+            {
+                'estimated_effort': strfdelta(obj.min_effort, '%H:%M:%S'),
+                'actual_effort': strfdelta(obj.max_effort, '%H:%M:%S')
+            }
+        )
+
+        data['fields'][self.post_lookup_meta_group].update(
+            {
+                # 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
+                # 'card_image_url': obj.card_image_url
+                'lms_web_url': obj.lms_web_url
+            }
+        )
+
+        return {
+            **data,
+        }
+
+
+class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):
+    """
+        Utility for publishing course run data to a Wordpress marketing site.
+        """
+    unique_field = 'location'
+    post_lookup_field = 'data_locator'
+    post_lookup_meta_group = 'open_edx_meta'
+
+    def publish_obj(self, obj, previous_obj=None):
+        """
+        Publish a Chapter to the marketing site.
+
+        Publication only occurs if the Chapter's status has changed.
+
+        Arguments:
+            obj (Chapter): Chapter instance to be published.
+
+        Keyword Arguments:
+            previous_obj (Chapter): Previous state of the chapter. Inspected to
+                determine if publication is necessary. May not exist if the course run
+                is being saved for the first time.
+        """
+        logger.info('Publishing module [%s] to marketing site (Wordpress) ...', obj.location)
+
+        # if previous_obj and obj.status != previous_obj.status:
+        post_data = self.serialize_obj(obj)
+
+        try:
+            post_id = self.post_id(obj)
+            self.edit_post(post_id, post_data)
+
+        except (PostLookupError) as error:
+            post_id = self.create_post(post_data)
+            if post_id:
+                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                obj.wordpress_post_id = post_id
+                obj.save(suppress_publication=True)
+
+    def serialize_obj(self, obj):
+        """
+        Serialize the Chapter instance to be published to Wordpress as custom post type 'module'.
+
+        Arguments:
+            obj (Chapter): Chapter instance to be published.
+
+        Returns:
+            dict: Data to PUT (edit) / POST (create) to the Wordpress API (/course)
+        """
+        data = super().serialize_obj(obj)
+        data['title'] = obj.title
+        data['slug'] = obj.slug
+        data['status'] = 'publish'
+
+        sequentials = []
+        for sequential in obj.sequentials.all():
+            try:
+                sequential_post_id = self.post_id(sequential)
+                sequentials.append(sequential_post_id)
+            except (PostLookupError) as error:
+                logger.info('Sequential post [%s] on marketing site (Wordpress) does not exist so cannot assign '
+                            'to Chapter `[%s]` ...', sequential.location, obj.title)
+
+        data['fields']['module_lessons'] = sequentials
+
+        data['fields']['goal'] = obj.goal_override
 
         data['fields'].setdefault('effort', {}).update(
             {
