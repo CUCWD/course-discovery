@@ -11,7 +11,7 @@ from django.utils.text import slugify
 from course_discovery.apps.course_metadata.choices import CourseRunStatus
 from course_discovery.apps.course_metadata.exceptions import (
     AliasCreateError, AliasDeleteError, FormRetrievalError, NodeCreateError, NodeDeleteError, NodeEditError,
-    NodeLookupError, PostLookupError, PostCreateError, PostEditError #, MediaLookupError, MediaCreateError
+    NodeLookupError, PostLookupError, PostCreateError, PostEditError, PostDeleteError #, MediaLookupError, MediaCreateError
 )
 from course_discovery.apps.course_metadata.utils import MarketingSiteWordpressAPIClient
 
@@ -64,7 +64,7 @@ class BaseMarketingSiteWordpressPublisher:
             self.partner.marketing_site_api_url
         )
 
-        logger.info('Retrieved bearer token [%s] for API calls to the marketing site (Wordpress) ...', self.client.bearer_token.token())
+        # logger.info('Retrieved bearer token [%s] for API calls to the marketing site (Wordpress) ...', self.client.bearer_token.token())
 
         self.rest_api_base = '{base}/wp/v2'.format(base=self.client.api_url) # urljoin(self.client.api_url, '/acf/v3/')
         self.media_api_base = '{base}/media'.format(base=self.rest_api_base)
@@ -98,18 +98,25 @@ class BaseMarketingSiteWordpressPublisher:
         """
         raise NotImplementedError
 
-    # def delete_obj(self, obj):
-    #     """
-    #     Delete a Wordpress post corresponding to the given model instance.
-    #
-    #     Arguments:
-    #         obj (django.db.models.Model): Model instance to be deleted.
-    #     """
-    #     # node_id = self.node_id(obj)
-    #     #
-    #     # self.delete_node(node_id)
-    #     pass
-    #
+    def delete_obj(self, obj):
+        """
+        Delete a Wordpress post corresponding to the given model instance.
+
+        Arguments:
+            obj (django.db.models.Model): Model instance to be deleted.
+        """
+
+        try:
+            post_id = self.post_id(obj)
+            self.delete_post(post_id)
+
+            logger.info('Deleted post [%d] - [%s] on marketing site (Wordpress) ...', post_id, obj.title)
+
+        except (PostLookupError) as error:
+            logger.info('Cannot find post [%s] on marketing site (Wordpress) to delete ...', obj.title)
+        except (PostDeleteError) as error:
+            logger.info('Cannot delete post [%s] on marketing site (Wordpress) to delete ...', obj.title)
+
     def serialize_obj(self, obj):
         """
         Serialize a model instance to a representation that can be written to Wordpress.
@@ -335,30 +342,19 @@ class BaseMarketingSiteWordpressPublisher:
                 }
             )
 
+    def delete_post(self, post_id):
+        post_url = '{base}/{post_id}?force=true'.format(base=self.post_base, post_id=post_id)
 
-    # def delete_node(self, node_id):
-    #     """
-    #     Delete a Wordpress post.
-    #
-    #     Arguments:
-    #         node_id (str): ID of the post to delete.
-    #
-    #     Raises:
-    #         NodeDeleteError: If the DELETE to Wordpress fails.
-    #     """
-    #     # node_url = '{base}/{node_id}'.format(base=self.node_api_base, node_id=node_id)
-    #     #
-    #     # response = self.client.api_session.delete(node_url)
-    #     #
-    #     # if response.status_code != 200:
-    #     #     raise NodeDeleteError(
-    #     #         {
-    #     #             'node_id': node_id,
-    #     #             'response_text': response.text,
-    #     #             'response_status': response.status_code
-    #     #         }
-    #     #     )
-    #     pass
+        response = self.client.api_session.delete(post_url)
+
+        if response.status_code != 200:
+            raise PostDeleteError(
+                {
+                    'post_id': post_id,
+                    'response_text': response.text,
+                    'response_status': response.status_code
+                }
+            )
 
     # def get_marketing_slug(self, obj):
     #     return obj.marketing_slug
@@ -677,11 +673,22 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         logger.info('Publishing course run [%s] to marketing site (Wordpress) ...', obj.key)
 
         # if previous_obj and obj.status != previous_obj.status:
-        post_id = self.post_id(obj)
+        # post_id = self.post_id(obj)
 
         post_data = self.serialize_obj(obj)
 
-        self.edit_post(post_id, post_data)
+        # self.edit_post(post_id, post_data)
+
+        try:
+            post_id = self.post_id(obj)
+            self.edit_post(post_id, post_data)
+
+        except (PostLookupError) as error:
+            post_id = self.create_post(post_data)
+            if post_id:
+                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                obj.wordpress_post_id = post_id
+                obj.save(suppress_publication=True)
 
 
     #

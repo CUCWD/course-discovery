@@ -1,5 +1,6 @@
 import datetime
 from datetime import timedelta
+from copy import deepcopy
 import itertools
 import logging
 from collections import defaultdict
@@ -626,13 +627,14 @@ class CourseRun(TimeStampedModel):
         self.min_effort = timedelta(hours=0, minutes=0, seconds=0)
         self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
 
-        for chapter in self.chapters.all():
-            if not chapter.hidden:
-                if chapter.min_effort:
-                    self.min_effort = self.min_effort + chapter.min_effort
+        if self.id:
+            for chapter in self.chapters.all():
+                if not chapter.hidden:
+                    if chapter.min_effort:
+                        self.min_effort = self.min_effort + chapter.min_effort
 
-                if chapter.max_effort:
-                    self.max_effort = self.max_effort + chapter.max_effort
+                    if chapter.max_effort:
+                        self.max_effort = self.max_effort + chapter.max_effort
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
@@ -651,7 +653,7 @@ class CourseRun(TimeStampedModel):
 
     def _publish_marketing(self):
         publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
-        previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
+        previous_obj = None #CourseRun.objects.get(id=self.id) if self.id else None
 
         publisher.publish_obj(self, previous_obj=previous_obj)
 
@@ -676,6 +678,40 @@ class CourseRun(TimeStampedModel):
                 transaction.on_commit(self._publish_marketing)
         else:
             super(CourseRun, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.course.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+
+                for chapter in self.chapters.all():
+
+                    if chapter:
+                        for sequential in chapter.sequentials.all():
+                            if sequential:
+                                sequential.delete()
+
+                        chapter.delete()
+
+                # self.course.delete()
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(CourseRun, self).delete(using)
+        else:
+            super(CourseRun, self).delete(using)
 
 
 class SeatType(TimeStampedModel):
@@ -770,13 +806,14 @@ class Chapter(TimeStampedModel):
         self.min_effort = timedelta(hours=0, minutes=0, seconds=0)
         self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
 
-        for sequential in self.sequentials.all():
-            if not sequential.hidden:
-                if sequential.min_effort:
-                    self.min_effort = self.min_effort + sequential.min_effort
+        if self.id:
+            for sequential in self.sequentials.all():
+                if not sequential.hidden:
+                    if sequential.min_effort:
+                        self.min_effort = self.min_effort + sequential.min_effort
 
-                if sequential.max_effort:
-                    self.max_effort = self.max_effort + sequential.max_effort
+                    if sequential.max_effort:
+                        self.max_effort = self.max_effort + sequential.max_effort
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
@@ -795,20 +832,21 @@ class Chapter(TimeStampedModel):
 
     def _publish_marketing(self):
         publisher = self._locate_publisher(self.course_run.course.partner)  # ChapterMarketingSitePublisher(self.course.partner)
-        previous_obj = Chapter.objects.get(id=self.id) if self.id else None
+        previous_obj = None # Chapter.objects.get(id=self.id) if self.id else None
 
         publisher.publish_obj(self, previous_obj=previous_obj)
 
         # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
         # at the CourseRun level with correct Chapter includes.
         for related_courseruns in self.course_runs.all():
-            related_courseruns.save()
+            if related_courseruns:
+                related_courseruns.save()
 
-            logger.info(
-                "Saved related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
-                    related_courseruns.title_override, related_courseruns.key, self.title, self.location
+                logger.info(
+                    "Saved related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
+                        related_courseruns.title_override, related_courseruns.key, self.title, self.location
+                    )
                 )
-            )
 
     def save(self, *args, **kwargs):
         #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
@@ -833,6 +871,45 @@ class Chapter(TimeStampedModel):
 
         else:
             super(Chapter, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.course_run.course.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+                # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+                # at the Chapter level with correct Sequential includes. Here we are removing the sequential.
+                for related_courserun in self.course_runs.all():
+                    if related_courserun:
+                        related_courserun.chapters.remove(self)
+                    # related_courserun.save()
+                    #
+                    # logger.info(
+                    #     "Saved related Course Run `{}` {} since Chapter `{}` {} was deleted.".format(
+                    #         related_courserun.title, related_courserun.key, self.title, self.location
+                    #     )
+                    # )
+
+                for sequential in self.sequentials.all():
+                    if sequential:
+                        sequential.delete()
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Chapter, self).delete(using)
+        else:
+            super(Chapter, self).delete(using)
 
 
 class Sequential(TimeStampedModel):
@@ -889,23 +966,23 @@ class Sequential(TimeStampedModel):
 
     def _publish_marketing(self):
         publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
-        previous_obj = Sequential.objects.get(id=self.id) if self.id else None
+        previous_obj = None #Sequential.objects.get(id=self.id) if self.id else None
 
         publisher.publish_obj(self, previous_obj=previous_obj)
 
         # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
         # at the Chapter level with correct Sequential includes.
         for related_chapter in self.chapters.all():
-            related_chapter.save()
+            if related_chapter:
+                related_chapter.save()
 
-            logger.info(
-                "Saved related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
-                    related_chapter.title, related_chapter.location, self.title, self.location
+                logger.info(
+                    "Saved related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
+                        related_chapter.title, related_chapter.location, self.title, self.location
+                    )
                 )
-            )
 
     def save(self, *args, **kwargs):
-        #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_publishable = (
             self.course_run.course.partner.has_marketing_site and
@@ -926,6 +1003,41 @@ class Sequential(TimeStampedModel):
         else:
             super(Sequential, self).save(*args, **kwargs)
 
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.course_run.course.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+                # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+                # at the Chapter level with correct Sequential includes. Here we are removing the sequential.
+                for related_chapter in self.chapters.all():
+                    if related_chapter:
+                        related_chapter.sequentials.remove(self)
+                    # related_chapter.save()
+                    #
+                    # logger.info(
+                    #     "Saved related Chapter `{}` {} since Sequential `{}` {} was deleted.".format(
+                    #         related_chapter.title, related_chapter.location, self.title, self.location
+                    #     )
+                    # )
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Sequential, self).delete(using)
+        else:
+            super(Sequential, self).delete(using)
+
 
 class Objective(TimeStampedModel):
     """ Objective model. """
@@ -942,13 +1054,14 @@ class Objective(TimeStampedModel):
         # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
         # at the Chapter level with correct Sequential includes.
         for related_sequential in self.sequentials.all():
-            related_sequential.save()
+            if related_sequential:
+                related_sequential.save()
 
-            logger.info(
-                "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
-                    related_sequential.title, related_sequential.location, self.description
+                logger.info(
+                    "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
+                        related_sequential.title, related_sequential.location, self.description
+                    )
                 )
-            )
 
 
 class Endorsement(TimeStampedModel):
