@@ -620,7 +620,9 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
         for sequential in obj.sequentials.all():
             try:
                 sequential_post_id = self.post_id(sequential)
-                sequentials.append(sequential_post_id)
+
+                if not sequential.hidden:
+                    sequentials.append(sequential_post_id)
             except (PostLookupError) as error:
                 logger.info('Sequential post [%s] on marketing site (Wordpress) does not exist so cannot assign '
                             'to Chapter `[%s]` ...', sequential.location, obj.title)
@@ -762,7 +764,9 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         for chapter in obj.chapters.all():
             try:
                 chapter_post_id = self.post_id(chapter)
-                chapters.append(chapter_post_id)
+
+                if not chapter.hidden:
+                    chapters.append(chapter_post_id)
             except (PostLookupError) as error:
                 logger.info('Chapter post [%s] on marketing site (Wordpress) does not exist so cannot assign '
                             'to Course `[%s]` ...', chapter.location, obj.title)
