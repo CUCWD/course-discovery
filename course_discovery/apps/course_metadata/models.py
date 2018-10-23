@@ -795,11 +795,12 @@ class CourseRun(TimeStampedModel):
         self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
 
         for chapter in self.chapters.all():
-            if chapter.min_effort:
-                self.min_effort = self.min_effort + chapter.min_effort
+            if not chapter.hidden:
+                if chapter.min_effort:
+                    self.min_effort = self.min_effort + chapter.min_effort
 
-            if chapter.max_effort:
-                self.max_effort = self.max_effort + chapter.max_effort
+                if chapter.max_effort:
+                    self.max_effort = self.max_effort + chapter.max_effort
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
@@ -971,11 +972,12 @@ class Chapter(TimeStampedModel):
         self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
 
         for sequential in self.sequentials.all():
-            if sequential.min_effort:
-                self.min_effort = self.min_effort + sequential.min_effort
+            if not sequential.hidden:
+                if sequential.min_effort:
+                    self.min_effort = self.min_effort + sequential.min_effort
 
-            if sequential.max_effort:
-                self.max_effort = self.max_effort + sequential.max_effort
+                if sequential.max_effort:
+                    self.max_effort = self.max_effort + sequential.max_effort
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
