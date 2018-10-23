@@ -18,6 +18,11 @@ PUBLICATION_FAILURE_MSG_TPL = _(
     'Please try again. If the error persists, please contact the Engineering Team.'
 )
 
+DELETION_FAILURE_MSG_TPL = _(
+    'An error occurred while deleting the {model} from the marketing site. '
+    'Please try again. If the error persists, please contact the Engineering Team.'
+)
+
 
 class ProgramEligibilityFilter(admin.SimpleListFilter):
     title = _('eligible for one-click purchase')
@@ -121,6 +126,28 @@ class CourseRunAdmin(admin.ModelAdmin):
             msg = PUBLICATION_FAILURE_MSG_TPL.format(model='course run')  # pylint: disable=no-member
             messages.add_message(request, messages.ERROR, msg)
 
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(CourseRunAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting course run [%s] from the marketing site.',
+                                 obj.key)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='course run')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
 
 @admin.register(Chapter)
 class ChapterAdmin(admin.ModelAdmin):
@@ -128,14 +155,36 @@ class ChapterAdmin(admin.ModelAdmin):
     list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'course_order', 'location')
     list_filter = ('hidden', 'title',)
     ordering = ('location', 'title',)
-    readonly_fields = ('uuid', 'wordpress_post_id', 'min_effort', 'max_effort',)
+    readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id', 'min_effort', 'max_effort',)
     search_fields = ('uuid', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
+        'course_run', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
         'course_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
     )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(ChapterAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting chapter [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='chapter')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Sequential)
@@ -144,7 +193,7 @@ class SequentialAdmin(admin.ModelAdmin):
     list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'chapter_order', 'location',)
     list_filter = ('hidden', 'title',)
     ordering = ('location', 'title',)
-    readonly_fields = ('uuid', 'course_run', 'wordpress_post_id',)
+    readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id',)
     search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
@@ -152,6 +201,28 @@ class SequentialAdmin(admin.ModelAdmin):
         'course_run', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
         'chapter_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
     )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(SequentialAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting sequential [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='sequential')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Objective)

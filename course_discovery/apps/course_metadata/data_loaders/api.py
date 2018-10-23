@@ -176,6 +176,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
                     api_url=self.partner.courses_api_url
                 )
                 logger.exception(msg)
+                continue
 
             # Load sequential block data for the course run; load this first since chapters depend on it.
             self._load_data_blocks(course_run_id, self.BLOCK_SEQUENTIAL)
@@ -191,6 +192,19 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
         blocks = response['blocks']
         logger.info('Retrieved %d blocks for %s update ...', len(blocks), block_type_update)
+
+        if block_type_update == self.BLOCK_SEQUENTIAL:
+            # Hide blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
+            block_response_locations = []
+            for block_key, block_body in blocks.items():
+                block_response_locations.append(block_body['id'])
+
+            for sequential in Sequential.objects.select_related().filter(course_run__key=course_id):
+
+                if sequential.location not in block_response_locations:
+                    sequential.delete()
+
+                # sequential.save(suppress_publication=True)
 
         for block_key, block_body in blocks.items():
             block_location_id = block_body['id']
@@ -263,6 +277,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
                     api_url=self.partner.courses_api_url
                 )
                 logger.exception(msg)
+                continue
 
 
     def get_block_location(self, block_location, block_type):
@@ -362,6 +377,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
     def format_chapter_data(self, block_body, course_id):
         defaults = {
+            'course_run': self.get_course_run(body={"id": course_id}),
             'location': block_body['id'],
             'lms_web_url': block_body['lms_web_url'],
             'title': self.get_title_name(block_body['display_name']),

@@ -53,6 +53,9 @@ class PostCreateError(MarketingSitePublisherException):
 class PostEditError(MarketingSitePublisherException):
     pass
 
+class PostDeleteError(MarketingSitePublisherException):
+    pass
+
 # class MediaLookupError(MarketingSitePublisherException):
 #     pass
 #
