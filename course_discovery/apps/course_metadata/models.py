@@ -648,6 +648,12 @@ class CourseRun(TimeStampedModel):
 
         return publisher_class(partner)
 
+    def _publish_marketing(self):
+        publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
+        previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
     def save(self, *args, **kwargs):
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_publishable = (
@@ -658,14 +664,15 @@ class CourseRun(TimeStampedModel):
         )
 
         if is_publishable:
-            self._calculate_effort_duration()
-
-            publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
-            previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
 
             with transaction.atomic():
+                self._calculate_effort_duration()
+
                 super(CourseRun, self).save(*args, **kwargs)
-                publisher.publish_obj(self, previous_obj=previous_obj)
+
+                # Need this `on_commit` to commit transaction to database so that the object provided within the
+                # marketing publisher gets updates.
+                transaction.on_commit(self._publish_marketing)
         else:
             super(CourseRun, self).save(*args, **kwargs)
 
@@ -789,6 +796,17 @@ class Chapter(TimeStampedModel):
         previous_obj = Chapter.objects.get(id=self.id) if self.id else None
 
         publisher.publish_obj(self, previous_obj=previous_obj)
+
+        # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
+        # at the CourseRun level with correct Chapter includes.
+        for related_courseruns in self.course_runs.all():
+            related_courseruns.save()
+
+            logger.info(
+                "Saved related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
+                    related_courseruns.title_override, related_courseruns.key, self.title, self.location
+                )
+            )
 
     def save(self, *args, **kwargs):
         #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
