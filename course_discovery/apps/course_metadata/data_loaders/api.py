@@ -248,37 +248,17 @@ class CoursesApiDataLoader(AbstractDataLoader):
                         # course has already been created here.
                         if block_type == self.BLOCK_COURSE:
                             if 'children' in block_body:
-                                self.update_chapter_children(block_type_model, block_body)
-
-                        # self.update_course_run(course_run, body)
-                        # course = getattr(course_run, 'canonical_for_course', False)
-                        # if course:
-                        #     course = self.update_course(course, body)
-                        #     logger.info('Processed course with key [%s].', course.key)
+                                self.update_course_chapters(block_type_model, block_body)
 
                     else:
                         logger.info('Could not find an existing %s', block_key)
 
                         if block_type == self.BLOCK_SEQUENTIAL:
-                            sequential = self.create_sequential(block_body, course_id)
-                            sequential.save()
+                            self.create_sequential(block_body, course_id)
 
                         if block_type == self.BLOCK_CHAPTER:
-                            chapter = self.create_chapter(block_body, course_id)
-                            chapter.save()
+                            self.create_chapter(block_body, course_id)
 
-                            if 'children' in block_body:
-                                self.update_sequential_children(chapter, block_body)
-
-                        # if block_type == self.BLOCK_COURSE:
-                        #     if 'children' in block_body:
-                        #         self.update_chapter_children(block_type_model, block_body)
-
-                        # course, created = self.get_or_create_course(body)
-                        # course_run = self.create_course_run(course, body)
-                        # if created:
-                        #     course.canonical_course_run = course_run
-                        #     course.save()
                 else:
                     logger.info("Not able to process a %s block response for %s", block_type, block_key)
 
@@ -315,14 +295,17 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
     def update_sequential(self, sequential, block_body, course_id):
         validated_data = self.format_sequential_data(block_body, course_id)
-        self._update_instance(sequential, validated_data, suppress_publication=True)
+        self._update_instance(sequential, validated_data) # , suppress_publication=True
 
         logger.info('Processed sequential with UUID [%s].', sequential.uuid)
 
     def create_sequential(self, block_body, course_id):
         defaults = self.format_sequential_data(block_body, course_id)
 
-        return Sequential.objects.create(**defaults)
+        sequential = Sequential.objects.create(**defaults)
+
+        if sequential:
+            sequential.save()
 
     def format_sequential_data(self, block_body, course_id):
         defaults = {
@@ -334,44 +317,19 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'hidden': False
         }
 
-        # When using a marketing site, only dates (excluding start) should come from the Course API.
-        # if not self.partner.has_marketing_site:
-        # defaults.update({
-        #     'start': self.parse_date(body['start']),
-        #     'card_image_url': body['media'].get('image', {}).get('raw'),
-        #     'title_override': body['name'],
-        #     'short_description_override': body['short_description'],
-        #     'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
-        #     'video': self.get_courserun_video(body),
-        #     'status': CourseRunStatus.Published,
-        #     'pacing_type': self.get_pacing_type(body),
-        #     'mobile_available': body.get('mobile_available') or False,
-        # })
-
         return defaults
 
-    def update_chapter(self, chapter, block_body, course_id):
-        validated_data = self.format_chapter_data(block_body, course_id)
-
-        self._update_instance(chapter, validated_data, suppress_publication=True)
-
-        if 'children' in block_body:
-            self.update_sequential_children(chapter, block_body)
-
-        logger.info('Processed chapter with UUID [%s].', chapter.uuid)
-
-    def update_sequential_children(self, chapter, block_body):
+    def _update_chapter_sequentials(self, chapter, block_body):
         sequentials = []
         chapter_order = 0
 
         for child in block_body['children']:
             sequentional_block_model = self.get_block_location(child, self.BLOCK_SEQUENTIAL)
             if sequentional_block_model:
-
                 # Assign an order presented by the Block REST API to be used as identifier for order on marketing
                 # front end. The SortedManyToManyField has `sort_value` but I couldn't figure how to get this to work.
                 setattr(sequentional_block_model, 'chapter_order', chapter_order)
-                sequentional_block_model.save()
+                sequentional_block_model.save(suppress_publication=True)
                 chapter_order += 1
 
                 sequentials.append(sequentional_block_model)
@@ -381,10 +339,24 @@ class CoursesApiDataLoader(AbstractDataLoader):
             setattr(chapter, 'sequentials', sequentials)
             chapter.save(suppress_publication=True)
 
+    def update_chapter(self, chapter, block_body, course_id):
+        validated_data = self.format_chapter_data(block_body, course_id)
+
+        if 'children' in block_body:
+            self._update_chapter_sequentials(chapter, block_body)
+
+        self._update_instance(chapter, validated_data) # , suppress_publication=True
+
+        logger.info('Processed chapter with UUID [%s].', chapter.uuid)
+
     def create_chapter(self, block_body, course_id):
         defaults = self.format_chapter_data(block_body, course_id)
 
-        return Chapter.objects.create(**defaults)
+        chapter = Chapter.objects.create(**defaults)
+
+        if chapter:
+            self._update_chapter_sequentials(chapter, block_body)
+            chapter.save()
 
     def format_chapter_data(self, block_body, course_id):
         defaults = {
@@ -395,24 +367,8 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'slug': self.get_slug_name(block_body['display_name'], course_id, block_body['block_id']),
             'hidden': False
         }
-        # 'sequentials': []
-
-        # When using a marketing site, only dates (excluding start) should come from the Course API.
-        # if not self.partner.has_marketing_site:
-        # defaults.update({
-        #     'start': self.parse_date(body['start']),
-        #     'card_image_url': body['media'].get('image', {}).get('raw'),
-        #     'title_override': body['name'],
-        #     'short_description_override': body['short_description'],
-        #     'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
-        #     'video': self.get_courserun_video(body),
-        #     'status': CourseRunStatus.Published,
-        #     'pacing_type': self.get_pacing_type(body),
-        #     'mobile_available': body.get('mobile_available') or False,
-        # })
 
         return defaults
-
 
     def get_course_run(self, body):
         course_run_key = body['id']
@@ -421,32 +377,31 @@ class CoursesApiDataLoader(AbstractDataLoader):
         except CourseRun.DoesNotExist:
             return None
 
-    def update_course_run(self, course_run, body):
-        validated_data = self.format_course_run_data(body)
-        self._update_instance(course_run, validated_data, suppress_publication=True)
-
-        logger.info('Processed course run with UUID [%s].', course_run.uuid)
-
-    def update_chapter_children(self, course_run, block_body):
+    def update_course_chapters(self, course_run, block_body):
         chapters = []
         course_order = 0
 
         for child in block_body['children']:
             chapter_block_model = self.get_block_location(child, self.BLOCK_CHAPTER)
             if chapter_block_model:
-
                 # Assign an order presented by the Block REST API to be used as identifier for order on marketing
                 # front end. The SortedManyToManyField has `sort_value` but I couldn't figure how to get this to work.
                 setattr(chapter_block_model, 'course_order', course_order)
-                chapter_block_model.save()
+                chapter_block_model.save(suppress_publication=True)
                 course_order += 1
 
                 chapters.append(chapter_block_model)
 
-        # Assign the Sequentials from Block REST API to the Chapter model instance.
+        # Assign the Chapters from Block REST API to the Course Run model instance.
         if chapters:
             setattr(course_run, 'chapters', chapters)
-            course_run.save(suppress_publication=True)
+            course_run.save()  # suppress_publication=True
+
+    def update_course_run(self, course_run, body):
+        validated_data = self.format_course_run_data(body)
+        self._update_instance(course_run, validated_data, suppress_publication=True)
+
+        logger.info('Processed course run with UUID [%s].', course_run.uuid)
 
     def create_course_run(self, course, body):
         defaults = self.format_course_run_data(body, course=course)
