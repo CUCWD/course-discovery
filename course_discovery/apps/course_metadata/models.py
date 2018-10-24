@@ -840,7 +840,7 @@ class Chapter(TimeStampedModel):
         # at the CourseRun level with correct Chapter includes.
         for related_courseruns in self.course_runs.all():
             if related_courseruns:
-                related_courseruns.save()
+                related_courseruns.save(suppress_publication=True)
 
                 logger.info(
                     "Saved related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
@@ -974,7 +974,7 @@ class Sequential(TimeStampedModel):
         # at the Chapter level with correct Sequential includes.
         for related_chapter in self.chapters.all():
             if related_chapter:
-                related_chapter.save()
+                related_chapter.save(suppress_publication=True)
 
                 logger.info(
                     "Saved related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
