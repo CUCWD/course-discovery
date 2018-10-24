@@ -139,6 +139,17 @@ class CoursesApiDataLoader(AbstractDataLoader):
         for body in results:
             course_run_id = body['id']
 
+            """
+            Continue to next course should the existing course be hidden (e.g. `none`, `about`) from the catalog using 
+            the `Course Visibility In Catalog` advanced setting for that configuration. At this point we'd like to
+            skip the hidden course(s) from storing data within the `course-discovery` store or publishing them on
+            marketing frontend (Wordpress). Should the `lms_catalog_service_user` used for connecting with the
+            LMS Course/Block REST API have access to Staff mode it would allow them to retrieve a payload of all
+            courses information regardless of this advanced setting being set to show on the catalog (eg. `both`).
+            """
+            if body['hidden']:
+                continue
+
             try:
                 body = self.clean_strings(body)
                 course_run = self.get_course_run(body)
