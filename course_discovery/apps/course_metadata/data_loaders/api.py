@@ -189,6 +189,12 @@ class CoursesApiDataLoader(AbstractDataLoader):
         blocks = response['blocks']
         logger.info('Retrieved %d blocks for %s update ...', len(blocks), block_type_update)
 
+
+        """
+        Remove any old Sequentials and Chapters from `course-discovery` store and/or marketing frontend that were 
+        removed from the course before adding new ones.
+        """
+
         if block_type_update == self.BLOCK_SEQUENTIAL:
             # Hide blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
             block_response_locations = []
@@ -200,8 +206,21 @@ class CoursesApiDataLoader(AbstractDataLoader):
                 if sequential.location not in block_response_locations:
                     sequential.delete()
 
-                # sequential.save(suppress_publication=True)
+        if block_type_update == self.BLOCK_CHAPTER:
+            # Hide blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
+            block_response_locations = []
+            for block_key, block_body in blocks.items():
+                block_response_locations.append(block_body['id'])
 
+            for chapter in Chapter.objects.select_related().filter(course_run__key=course_id):
+
+                if chapter.location not in block_response_locations:
+                    chapter.delete()
+
+        """
+        Add changes for new Sequentials and Chapters or update exist ones to `course-discovery` store and/or publish to 
+        marketing frontend.
+        """
         for block_key, block_body in blocks.items():
             block_location_id = block_body['id']
 
