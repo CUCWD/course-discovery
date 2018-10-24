@@ -496,6 +496,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'end': self.parse_date(body['end']),
             'enrollment_start': self.parse_date(body['enrollment_start']),
             'enrollment_end': self.parse_date(body['enrollment_end']),
+            'slug': self.get_slug_name(body['name'], body["id"], 'course'),
             'hidden': body.get('hidden', False),
         }
 
