@@ -68,6 +68,7 @@ class BaseMarketingSiteWordpressPublisher:
 
         self.rest_api_base = '{base}/wp/v2'.format(base=self.client.api_url) # urljoin(self.client.api_url, '/acf/v3/')
         self.media_api_base = '{base}/media'.format(base=self.rest_api_base)
+        self.post_organization_api_base = '{base}/organization'.format(base=self.rest_api_base)
         self.post_course_api_base = '{base}/course'.format(base=self.rest_api_base) #urljoin(self.rest_api_base, 'course')
         self.post_module_api_base = '{base}/module'.format(base=self.rest_api_base)
         self.post_lesson_api_base = '{base}/lesson'.format(base=self.rest_api_base)
@@ -77,6 +78,7 @@ class BaseMarketingSiteWordpressPublisher:
 
         # Define the post_base based on publisher type
         switcher = {
+            "OrganizationMarketingSiteWordpressPublisher" : self.post_organization_api_base,
             "CourseRunMarketingSiteWordpressPublisher" : self.post_course_api_base,
             "ChapterMarketingSiteWordpressPublisher" : self.post_module_api_base,
             "SequentialMarketingSiteWordpressPublisher" : self.post_lesson_api_base
@@ -110,12 +112,12 @@ class BaseMarketingSiteWordpressPublisher:
             post_id = self.post_id(obj)
             self.delete_post(post_id)
 
-            logger.info('Deleted post [%d] - [%s] on marketing site (Wordpress) ...', post_id, obj.title)
+            logger.info('Deleted post [%d] - [%s] on marketing site (Wordpress) ...', post_id, obj.name if self.__class__ == OrganizationMarketingSiteWordpressPublisher else obj.title)
 
         except (PostLookupError) as error:
-            logger.info('Cannot find post [%s] on marketing site (Wordpress) to delete ...', obj.title)
+            logger.info('Cannot find post [%s] on marketing site (Wordpress) to delete ...', obj.name if self.__class__ == OrganizationMarketingSiteWordpressPublisher else obj.title)
         except (PostDeleteError) as error:
-            logger.info('Cannot delete post [%s] on marketing site (Wordpress) to delete ...', obj.title)
+            logger.info('Cannot delete post [%s] on marketing site (Wordpress) to delete ...', obj.name if self.__class__ == OrganizationMarketingSiteWordpressPublisher else obj.title)
 
     def serialize_obj(self, obj):
         """
@@ -128,6 +130,7 @@ class BaseMarketingSiteWordpressPublisher:
             dict: Data to PUT to the Wordpress API.
         """
         return {
+            "status": "publish",
             "fields": {
                 self.post_lookup_meta_group: {
                     self.post_lookup_field: str(getattr(obj, self.unique_field)),
@@ -532,7 +535,6 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
-        data['status'] = 'publish'
 
         objectives = []
         for objective in obj.objectives.all():
@@ -610,7 +612,6 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
-        data['status'] = 'publish'
 
         sequentials = []
         for sequential in obj.sequentials.all():
@@ -756,7 +757,11 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
-        data['status'] = 'publish'
+        data['fields'].setdefault('hero', {}).update(
+            {
+                'banner_organization': obj.course.authoring_organizations.first().wordpress_post_id if obj.course.authoring_organizations.all() else None,
+            }
+        )
 
         # try:
         #     data['fields']['hero'] = self.media_id(obj)
@@ -804,8 +809,8 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
                 'course_end_date' : str(obj.end) if obj.end else '',
                 'enrollment_start_date' : str(obj.enrollment_start) if obj.enrollment_start else '',
                 'enrollment_end_date' : str(obj.enrollment_end) if obj.enrollment_end else '',
-                'language' : obj.language.code,
-                'transcript_languages' : [ language.code for language in obj.transcript_languages.all() ],
+                'language' : obj.language.code if obj.language else '',
+                'transcript_languages' : [ language.code if language else '' for language in obj.transcript_languages.all() ],
             })
 
 
@@ -822,6 +827,93 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
     #
     # def alias(self, obj):
     #     return 'course/{slug}'.format(slug=self.get_marketing_slug(obj))
+
+
+class OrganizationMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):
+    """
+    Utility for publishing organization data to a Wordpress marketing site.
+    """
+    unique_field = 'key'
+    post_lookup_field = 'data_locator'
+    post_lookup_meta_group = 'open_edx_meta'
+
+    def publish_obj(self, obj, previous_obj=None):
+        """
+        Publish a Organization to the marketing site.
+
+        Publication only occurs if the Organization's status has changed.
+
+        Arguments:
+            obj (Organization): Organization instance to be published.
+
+        Keyword Arguments:
+            previous_obj (Organization): Previous state of the organization. Inspected to
+                determine if publication is necessary. May not exist if the organization
+                is being saved for the first time.
+        """
+        logger.info('Publishing organization [%s] to marketing site (Wordpress) ...', obj.key)
+
+        # if previous_obj and obj.status != previous_obj.status:
+        # post_id = self.post_id(obj)
+
+        post_data = self.serialize_obj(obj)
+
+        # self.edit_post(post_id, post_data)
+
+        try:
+            post_id = self.post_id(obj)
+            self.edit_post(post_id, post_data)
+
+        except (PostLookupError) as error:
+            post_id = self.create_post(post_data)
+            if post_id:
+                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                obj.wordpress_post_id = post_id
+                obj.save(suppress_publication=True)
+
+    def serialize_obj(self, obj):
+        """
+        Serialize the Organization instance to be published to Wordpress as custom post type 'course'.
+
+        Arguments:
+            obj (Organization): Organization instance to be published.
+
+        Returns:
+            dict: Data to PUT to the Wordpress API (/course)
+        """
+        data = super().serialize_obj(obj)
+        data['title'] = obj.name
+        data['slug'] = obj.slug
+
+        data['fields'].setdefault('hero', {}).update(
+            {
+                'banner_description' : obj.description
+            }
+        )
+
+        # try:
+        #     data['fields']['hero'] = self.media_id(obj)
+        # except MediaLookupError:
+        #     # logger.warning('Could not find course run [%s]', course_run_key)
+        #
+        #     # Create media content on Wordpress if it doesn't exist.
+        #     obj.wordpress_media_id = data['fields']['hero'] = self.create_media(self.serialize_media(obj))
+        #     obj.save()
+
+        data['fields']['description'] = obj.description
+
+        data['fields'][self.post_lookup_meta_group].update(
+            {
+                'marketing_url_path' : obj.marketing_url_path,
+                'homepage_url' : obj.homepage_url,
+                'logo_image_url' : obj.logo_image_url,
+                'certificate_logo_image_url' : obj.certificate_logo_image_url,
+            })
+
+
+        return {
+            **data,
+        }
 
 
 class ProgramMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):

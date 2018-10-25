@@ -32,7 +32,8 @@ from course_discovery.apps.course_metadata.publishers_wordpress import (
     SequentialMarketingSiteWordpressPublisher,
     ChapterMarketingSiteWordpressPublisher,
     CourseRunMarketingSiteWordpressPublisher,
-    ProgramMarketingSiteWordpressPublisher
+    ProgramMarketingSiteWordpressPublisher,
+    OrganizationMarketingSiteWordpressPublisher
 )
 
 from course_discovery.apps.course_metadata.query import CourseQuerySet, CourseRunQuerySet, ProgramQuerySet
@@ -166,6 +167,9 @@ class Organization(TimeStampedModel):
     """ Organization model. """
     partner = models.ForeignKey(Partner, null=True, blank=False)
     uuid = models.UUIDField(blank=False, null=False, default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
     key = models.CharField(max_length=255)
     name = models.CharField(max_length=255)
     marketing_url_path = models.CharField(max_length=255, null=True, blank=True)
@@ -183,6 +187,9 @@ class Organization(TimeStampedModel):
         help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
     )
 
+    slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    hidden = models.BooleanField(default=False)
+
     class Meta:
         unique_together = (
             ('partner', 'key'),
@@ -198,6 +205,71 @@ class Organization(TimeStampedModel):
             return urljoin(self.partner.marketing_site_url_root, self.marketing_url_path)
 
         return None
+
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": None,
+            "wordpress": OrganizationMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def _publish_marketing(self):
+        publisher = self._locate_publisher(self.partner)  # OrganizationMarketingSiteWordpressPublisher(self.course.partner)
+        previous_obj = None  # Organization.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
+    def save(self, *args, **kwargs):
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_publishable = (
+                self.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+                # Pop to clean the kwargs for the base class save call below
+                not suppress_publication
+        )
+
+        if is_publishable:
+
+            with transaction.atomic():
+                super(Organization, self).save(*args, **kwargs)
+
+                # Need this `on_commit` to commit transaction to database so that the object provided within the
+                # marketing publisher gets updates.
+                transaction.on_commit(self._publish_marketing)
+
+        else:
+            super(Organization, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site')  # and
+            # Pop to clean the kwargs for the base class save call below
+            # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Organization, self).delete(using)
+        else:
+            super(Organization, self).delete(using)
 
 
 class Person(TimeStampedModel):
