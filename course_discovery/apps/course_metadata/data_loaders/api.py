@@ -149,6 +149,25 @@ class CoursesApiDataLoader(AbstractDataLoader):
         results = response['results']
         logger.info('Retrieved %d course runs...', len(results))
 
+        """
+        Deleting old Courses from `course-discovery` store and/or marketing frontend that were 
+        removed from the CMS before adding new ones. The LMS Course REST API can show a limited subset of the existing 
+        courses should the `lms_catalog_service_user` account not have `Staff` enabled.
+        """
+        # Hide courses that are not in the response. This is an indicator that the course has been removed from the CMS.
+        course_response_locations = []
+        for body in results:
+            course_response_locations.append(body['id'])
+
+        for course in CourseRun.objects.all():
+
+            if course.key not in course_response_locations:
+                course.delete()
+
+        """
+        Add changes for new Courses or update exist ones to `course-discovery` store and/or publish to 
+        marketing frontend.
+        """
         for body in results:
             course_run_id = body['id']
 
@@ -211,7 +230,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
         """
 
         if block_type_update == self.BLOCK_SEQUENTIAL:
-            # Hide blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
+            # Delete blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
             block_response_locations = []
             for block_key, block_body in blocks.items():
                 block_response_locations.append(block_body['id'])
@@ -222,7 +241,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
                     sequential.delete()
 
         if block_type_update == self.BLOCK_CHAPTER:
-            # Hide blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
+            # Delete blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
             block_response_locations = []
             for block_key, block_body in blocks.items():
                 block_response_locations.append(block_body['id'])
