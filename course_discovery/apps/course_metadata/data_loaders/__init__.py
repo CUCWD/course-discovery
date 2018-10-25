@@ -5,6 +5,7 @@ import html2text
 import markdown
 from dateutil.parser import parse
 from django.utils.functional import cached_property
+from django.utils.text import slugify
 from edx_rest_api_client.client import EdxRestApiClient
 from opaque_keys.edx.keys import CourseKey
 
@@ -164,3 +165,59 @@ class AbstractDataLoader(metaclass=abc.ABCMeta):
     @classmethod
     def get_or_create_image(cls, url):
         return cls._get_or_create_media(Image, url)
+
+    @classmethod
+    def get_title_name(cls, title):
+        """
+        Given a serialized title, return the corresponding
+        title name without number prefix.
+
+        Args:
+            title (str): Example ("1.2 Types of Drawings").
+
+        Returns:
+            str: Example ("Types of Drawings")
+        """
+        new_title = ""
+        separator = " "
+        title_terms = title.split(' ')
+        for term in title_terms[:-1]:
+            # if re.match("^\d+?\.\d+?$", term) is None:
+            if not term.replace('.', '').isdigit():
+                new_title += term + separator
+
+        new_title += title_terms[-1]
+
+        return '{title}'.format(title=new_title)
+
+    @classmethod
+    def get_slug_name(cls, title, course_id, block_id):
+        """
+        Given a serialized title, return the corresponding
+        slug name without number prefix.
+
+        Args:
+            title (str): Example ("1.2 Types of Drawings").
+
+        Returns:
+            str: Example ("types-of-drawings")
+        """
+        slug = ""
+        separator = "-"
+        title_terms = slugify(title).split('-')
+        for term in title_terms[:-1]:
+            # if re.match("^\d+?\.\d+?$", term) is None:
+            if not term.isdigit():
+                slug += term.lower() + separator
+
+        slug += title_terms[-1].lower()
+
+        # Create slug for the course_id
+        course_id_slug = ""
+        if course_id.find("+") > 0:
+            course_id_slug = slugify([part + " " for part in course_id.split(':')[-1].split('+')])
+
+        elif course_id.find("/") > 0:
+            course_id_slug = slugify([part + " " for part in course_id.split('/')])
+
+        return '{course_id_slug}-{slug}-{block_id}'.format(course_id_slug=course_id_slug, slug=slug, block_id=block_id)

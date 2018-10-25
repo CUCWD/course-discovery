@@ -3,6 +3,7 @@ import logging
 import math
 from decimal import Decimal
 from io import BytesIO
+from django.utils.text import slugify
 
 import requests
 from django.core.files import File
@@ -12,7 +13,7 @@ from course_discovery.apps.core.models import Currency
 from course_discovery.apps.course_metadata.choices import CourseRunPacing, CourseRunStatus
 from course_discovery.apps.course_metadata.data_loaders import AbstractDataLoader
 from course_discovery.apps.course_metadata.models import (
-    Course, CourseRun, Organization, Program, ProgramType, Seat, Video
+    Course, CourseRun, Chapter, Sequential, Organization, Program, ProgramType, Seat, Video
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,9 @@ class OrganizationsApiDataLoader(AbstractDataLoader):
             'key': key,
             'partner': self.partner,
             'certificate_logo_image_url': logo,
+            'name': body['name'],
+            'slug': slugify(body['name']),
+            'description': body['description'],
         }
 
         if not self.partner.has_marketing_site:
@@ -70,44 +74,104 @@ class OrganizationsApiDataLoader(AbstractDataLoader):
 class CoursesApiDataLoader(AbstractDataLoader):
     """ Loads course runs from the Courses API. """
 
+    BLOCK_COURSE = 'course'
+    BLOCK_CHAPTER = 'chapter'
+    BLOCK_SEQUENTIAL = 'sequential'
+
     def ingest(self):
-        logger.info('Refreshing Courses and CourseRuns from %s...', self.partner.courses_api_url)
+        logger.info('Refreshing Courses, CourseRuns, Chapters, and Sequentials from %s...', self.partner.courses_api_url)
 
         initial_page = 1
-        response = self._make_request(initial_page)
+        response = self._make_request_courses(initial_page)
         count = response['pagination']['count']
         pages = response['pagination']['num_pages']
-        self._process_response(response)
+        self._process_response_courses(response)
 
         pagerange = range(initial_page + 1, pages + 1)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:  # pragma: no cover
             if self.is_threadsafe:
                 for page in pagerange:
-                    executor.submit(self._load_data, page)
+                    executor.submit(self._load_data_courses, page)
             else:
-                for future in [executor.submit(self._make_request, page) for page in pagerange]:
+                for future in [executor.submit(self._make_request_courses, page) for page in pagerange]:
                     response = future.result()
-                    self._process_response(response)
+                    self._process_response_courses(response)
 
         logger.info('Retrieved %d course runs from %s.', count, self.partner.courses_api_url)
 
         self.delete_orphans()
 
-    def _load_data(self, page):  # pragma: no cover
+    def _load_data_courses(self, page):  # pragma: no cover
         """Make a request for the given page and process the response."""
-        response = self._make_request(page)
-        self._process_response(response)
+        response = self._make_request_courses(page)
+        self._process_response_courses(response)
 
-    def _make_request(self, page):
+    def _make_request_courses(self, page):
         return self.api_client.courses().get(page=page, page_size=self.PAGE_SIZE, username=self.username)
 
-    def _process_response(self, response):
+    def _load_data_blocks(self, course_run_id, block_type):  # pragma: no cover
+        """
+        Make a request for the given course and process the block type (chapter, sequential) response.
+        Need to pass in parent_block_type because the Block REST API won't show children field values.
+        """
+        block_type_filter_selector = {
+            self.BLOCK_SEQUENTIAL: block_type,
+            self.BLOCK_CHAPTER: block_type + ',' + self.BLOCK_SEQUENTIAL,
+            self.BLOCK_COURSE: block_type + ',' + self.BLOCK_CHAPTER
+        }
+
+        response = self._make_request_blocks(
+            course_id=course_run_id,
+            depth='3',
+            block_types_filter=block_type_filter_selector.get(block_type, ''),
+            requested_fields='children,display_name,type,due,graded,special_exam_info,format'
+        )
+        self._process_response_blocks(response, block_type, course_run_id)
+
+    def _make_request_blocks(self, course_id, depth, block_types_filter, requested_fields):
+        return self.api_client.blocks().get(
+            username=self.username, course_id=course_id, depth=depth, block_types_filter=block_types_filter,
+            requested_fields=requested_fields
+        )
+
+    def _process_response_courses(self, response):
+        """ Process Courses """
         results = response['results']
         logger.info('Retrieved %d course runs...', len(results))
 
+        """
+        Deleting old Courses from `course-discovery` store and/or marketing frontend that were 
+        removed from the CMS before adding new ones. The LMS Course REST API can show a limited subset of the existing 
+        courses should the `lms_catalog_service_user` account not have `Staff` enabled.
+        """
+        # Hide courses that are not in the response. This is an indicator that the course has been removed from the CMS.
+        course_response_locations = []
+        for body in results:
+            course_response_locations.append(body['id'])
+
+        for course in CourseRun.objects.all():
+
+            if course.key not in course_response_locations:
+                course.delete()
+
+        """
+        Add changes for new Courses or update exist ones to `course-discovery` store and/or publish to 
+        marketing frontend.
+        """
         for body in results:
             course_run_id = body['id']
+
+            """
+            Continue to next course should the existing course be hidden (e.g. `none`, `about`) from the catalog using 
+            the `Course Visibility In Catalog` advanced setting for that configuration. At this point we'd like to
+            skip the hidden course(s) from storing data within the `course-discovery` store or publishing them on
+            marketing frontend (Wordpress). Should the `lms_catalog_service_user` used for connecting with the
+            LMS Course/Block REST API have access to Staff mode it would allow them to retrieve a payload of all
+            courses information regardless of this advanced setting being set to show on the catalog (eg. `both`).
+            """
+            if body['hidden']:
+                continue
 
             try:
                 body = self.clean_strings(body)
@@ -131,6 +195,207 @@ class CoursesApiDataLoader(AbstractDataLoader):
                     api_url=self.partner.courses_api_url
                 )
                 logger.exception(msg)
+                continue
+
+            # Load sequential block data for the course run; load this first since chapters depend on it.
+            self._load_data_blocks(course_run_id, self.BLOCK_SEQUENTIAL)
+
+            # Load chapter block data for the course run
+            self._load_data_blocks(course_run_id, self.BLOCK_CHAPTER)
+
+            # Load chapter block data to find children (chapters) and update the order.
+            self._load_data_blocks(course_run_id, self.BLOCK_COURSE)
+
+    def _process_response_blocks(self, response, block_type_update, course_id):
+        """ Process Course Run Block Type (chapters, sequentials) """
+
+        blocks = response['blocks']
+        logger.info('Retrieved %d blocks for %s update ...', len(blocks), block_type_update)
+
+
+        """
+        Remove any old Sequentials and Chapters from `course-discovery` store and/or marketing frontend that were 
+        removed from the course before adding new ones.
+        """
+
+        if block_type_update == self.BLOCK_SEQUENTIAL:
+            # Delete blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
+            block_response_locations = []
+            for block_key, block_body in blocks.items():
+                block_response_locations.append(block_body['id'])
+
+            for sequential in Sequential.objects.select_related().filter(course_run__key=course_id):
+
+                if sequential.location not in block_response_locations:
+                    sequential.delete()
+
+        if block_type_update == self.BLOCK_CHAPTER:
+            # Delete blocks that are not in the response. This is an indicator that the blocks have been removed from the course.
+            block_response_locations = []
+            for block_key, block_body in blocks.items():
+                block_response_locations.append(block_body['id'])
+
+            for chapter in Chapter.objects.select_related().filter(course_run__key=course_id):
+
+                if chapter.location not in block_response_locations:
+                    chapter.delete()
+
+        """
+        Add changes for new Sequentials and Chapters or update exist ones to `course-discovery` store and/or publish to 
+        marketing frontend.
+        """
+        for block_key, block_body in blocks.items():
+            block_location_id = block_body['id']
+
+            try:
+                block_body = self.clean_strings(block_body)
+                block_type = block_body['type']
+
+                # Verify that the Block REST API returns the correct type before parsing and updating the model.
+                if block_type == block_type_update and (
+                        block_type == self.BLOCK_SEQUENTIAL or
+                        block_type == self.BLOCK_CHAPTER or
+                        block_type == self.BLOCK_COURSE):
+
+                    if block_type == self.BLOCK_COURSE:
+                        block_type_model = self.get_block_location(course_id, block_body['type'])
+                    else:
+                        block_type_model = self.get_block_location(block_body['id'], block_body['type'])
+
+                    if block_type_model:
+                        logger.info('Found existing %s', block_key)
+
+                        if block_type == self.BLOCK_SEQUENTIAL:
+                            self.update_sequential(block_type_model, block_body, course_id)
+
+                        if block_type == self.BLOCK_CHAPTER:
+                            self.update_chapter(block_type_model, block_body, course_id)
+
+                        # We're only updating the courses children (Chapters) relationship on update assuming the
+                        # course has already been created here.
+                        if block_type == self.BLOCK_COURSE:
+                            if 'children' in block_body:
+                                self.update_course_chapters(block_type_model, block_body)
+
+                    else:
+                        logger.info('Could not find an existing %s', block_key)
+
+                        if block_type == self.BLOCK_SEQUENTIAL:
+                            self.create_sequential(block_body, course_id)
+
+                        if block_type == self.BLOCK_CHAPTER:
+                            self.create_chapter(block_body, course_id)
+
+                else:
+                    logger.info("Not able to process a %s block response for %s", block_type, block_key)
+
+            except:  # pylint: disable=bare-except
+                msg = 'An error occurred while updating {block_location} from {api_url}'.format(
+                    block_location=block_location_id,
+                    api_url=self.partner.courses_api_url
+                )
+                logger.exception(msg)
+                continue
+
+
+    def get_block_location(self, block_location, block_type):
+        try:
+            if block_type == self.BLOCK_SEQUENTIAL:
+                return Sequential.objects.get(location__iexact=block_location)
+
+            elif block_type == self.BLOCK_CHAPTER:
+                return Chapter.objects.get(location__iexact=block_location)
+
+            elif block_type == self.BLOCK_COURSE:
+                # Since the CourseRun doesn't include a block location identifier we have to use the key field
+                # to compare that against what the block_location sends from the Block REST API.
+                # course_key = "course-v1:"
+                # key_parts = block_location.split(':')[-1].split('+')[:3]
+                # for parts in key_parts:
+                #     course_key += parts + "+"
+                #
+                # return CourseRun.objects.get(key__iexact=course_key[:-1])
+                return CourseRun.objects.get(key__iexact=block_location)
+
+        except (Sequential.DoesNotExist, Chapter.DoesNotExist) as error:
+            return None
+
+    def update_sequential(self, sequential, block_body, course_id):
+        validated_data = self.format_sequential_data(block_body, course_id)
+        self._update_instance(sequential, validated_data) # , suppress_publication=True
+
+        logger.info('Processed sequential with UUID [%s].', sequential.uuid)
+
+    def create_sequential(self, block_body, course_id):
+        defaults = self.format_sequential_data(block_body, course_id)
+
+        sequential = Sequential.objects.create(**defaults)
+
+        if sequential:
+            sequential.save()
+
+    def format_sequential_data(self, block_body, course_id):
+        defaults = {
+            'course_run': self.get_course_run(body={"id": course_id}),
+            'location': block_body['id'],
+            'lms_web_url': block_body['lms_web_url'],
+            'title': self.get_title_name(block_body['display_name']),
+            'slug': self.get_slug_name(block_body['display_name'], course_id, block_body['block_id']),
+            'hidden': False
+        }
+
+        return defaults
+
+    def _update_chapter_sequentials(self, chapter, block_body):
+        sequentials = []
+        chapter_order = 0
+
+        for child in block_body['children']:
+            sequentional_block_model = self.get_block_location(child, self.BLOCK_SEQUENTIAL)
+            if sequentional_block_model:
+                # Assign an order presented by the Block REST API to be used as identifier for order on marketing
+                # front end. The SortedManyToManyField has `sort_value` but I couldn't figure how to get this to work.
+                setattr(sequentional_block_model, 'chapter_order', chapter_order)
+                sequentional_block_model.save(suppress_publication=True)
+                chapter_order += 1
+
+                sequentials.append(sequentional_block_model)
+
+        # Assign the Sequentials from Block REST API to the Chapter model instance.
+        if sequentials:
+            setattr(chapter, 'sequentials', sequentials)
+            chapter.save(suppress_publication=True)
+
+    def update_chapter(self, chapter, block_body, course_id):
+        validated_data = self.format_chapter_data(block_body, course_id)
+
+        if 'children' in block_body:
+            self._update_chapter_sequentials(chapter, block_body)
+
+        self._update_instance(chapter, validated_data) # , suppress_publication=True
+
+        logger.info('Processed chapter with UUID [%s].', chapter.uuid)
+
+    def create_chapter(self, block_body, course_id):
+        defaults = self.format_chapter_data(block_body, course_id)
+
+        chapter = Chapter.objects.create(**defaults)
+
+        if chapter:
+            self._update_chapter_sequentials(chapter, block_body)
+            chapter.save()
+
+    def format_chapter_data(self, block_body, course_id):
+        defaults = {
+            'course_run': self.get_course_run(body={"id": course_id}),
+            'location': block_body['id'],
+            'lms_web_url': block_body['lms_web_url'],
+            'title': self.get_title_name(block_body['display_name']),
+            'slug': self.get_slug_name(block_body['display_name'], course_id, block_body['block_id']),
+            'hidden': False
+        }
+
+        return defaults
 
     def get_course_run(self, body):
         course_run_key = body['id']
@@ -138,6 +403,26 @@ class CoursesApiDataLoader(AbstractDataLoader):
             return CourseRun.objects.get(key__iexact=course_run_key)
         except CourseRun.DoesNotExist:
             return None
+
+    def update_course_chapters(self, course_run, block_body):
+        chapters = []
+        course_order = 0
+
+        for child in block_body['children']:
+            chapter_block_model = self.get_block_location(child, self.BLOCK_CHAPTER)
+            if chapter_block_model:
+                # Assign an order presented by the Block REST API to be used as identifier for order on marketing
+                # front end. The SortedManyToManyField has `sort_value` but I couldn't figure how to get this to work.
+                setattr(chapter_block_model, 'course_order', course_order)
+                chapter_block_model.save(suppress_publication=True)
+                course_order += 1
+
+                chapters.append(chapter_block_model)
+
+        # Assign the Chapters from Block REST API to the Course Run model instance.
+        if chapters:
+            setattr(course_run, 'chapters', chapters)
+            course_run.save()  # suppress_publication=True
 
     def update_course_run(self, course_run, body):
         validated_data = self.format_course_run_data(body)
@@ -193,21 +478,23 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'end': self.parse_date(body['end']),
             'enrollment_start': self.parse_date(body['enrollment_start']),
             'enrollment_end': self.parse_date(body['enrollment_end']),
+            'slug': self.get_slug_name(body['name'], body["id"], 'course'),
             'hidden': body.get('hidden', False),
         }
 
         # When using a marketing site, only dates (excluding start) should come from the Course API.
-        if not self.partner.has_marketing_site:
-            defaults.update({
-                'start': self.parse_date(body['start']),
-                'card_image_url': body['media'].get('image', {}).get('raw'),
-                'title_override': body['name'],
-                'short_description_override': body['short_description'],
-                'video': self.get_courserun_video(body),
-                'status': CourseRunStatus.Published,
-                'pacing_type': self.get_pacing_type(body),
-                'mobile_available': body.get('mobile_available') or False,
-            })
+        # if not self.partner.has_marketing_site:
+        defaults.update({
+            'start': self.parse_date(body['start']),
+            'card_image_url': body['media'].get('image', {}).get('raw'),
+            'title_override': body['name'],
+            'short_description_override': body['short_description'],
+            'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
+            'video': self.get_courserun_video(body),
+            'status': CourseRunStatus.Published,
+            'pacing_type': self.get_pacing_type(body),
+            'mobile_available': body.get('mobile_available') or False,
+        })
 
         if course:
             defaults['course'] = course
