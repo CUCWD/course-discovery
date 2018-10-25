@@ -148,3 +148,176 @@ class MarketingSiteAPIClient(object):
             'Content-Type': 'application/json',
             'X-CSRF-Token': self.csrf_token,
         }
+
+
+# https://stackoverflow.com/questions/6760685/creating-a-singleton-in-python
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
+# @singleton
+class BearerToken():
+    """ Singleton Class that creates a bearer token"""
+    __metaclass__ = Singleton
+
+    _token = None
+
+    def __init__(self, api_url, username, password):
+        # Login using the marketing credentials to access the JWT bearer token for future API calls.
+        session = requests.Session()
+        login_url = '{root}/jwt-auth/v1/token'.format(root=api_url)
+        login_data = {
+            'username': username,
+            'password': password,
+        }
+        login_headers = {
+            # 'Host': 'ew-localhost.com',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
+        }
+
+        # session.headers.update(token_headers)
+        response = session.post(login_url, headers=login_headers, data=login_data)
+
+        # response = requests.post(
+        #     login_url,
+        #     data=login_data,
+        #     headers=login_header
+        # )
+        if not (response.status_code == 200):  # and response.url == admin_url
+            raise MarketingSiteAPIClientException(
+                {
+                    'message': 'Marketing Site (Wordpress) Login failed when retrieving the BearerToken!',
+                    'status': response.status_code,
+                    'url': response.url
+                }
+            )
+
+        data = response.json()
+
+        try:
+            self._token = data['token']
+        except KeyError:
+            raise requests.RequestException(response=response)
+
+    def token(self):
+        return self._token
+
+
+# def get_bearer_token(api_url, username, password):
+#     # Login using the marketing credentials to access the JWT bearer token for future API calls.
+#     session = requests.Session()
+#     login_url = '{root}/jwt-auth/v1/token'.format(root=api_url)
+#     login_data = {
+#         'username': username,
+#         'password': password,
+#     }
+#     login_headers = {
+#         # 'Host': 'ew-localhost.com',
+#         'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
+#     }
+#
+#     # session.headers.update(token_headers)
+#     response = session.post(login_url, headers=login_headers, data=login_data)
+#
+#     # response = requests.post(
+#     #     login_url,
+#     #     data=login_data,
+#     #     headers=login_header
+#     # )
+#     if not (response.status_code == 200):  # and response.url == admin_url
+#         raise MarketingSiteAPIClientException(
+#             {
+#                 'message': 'Marketing Site (Wordpress) Login failed!',
+#                 'status': response.status_code,
+#                 'url': response.url
+#             }
+#         )
+#
+#     data = response.json()
+#
+#     try:
+#         return data['token']
+#     except KeyError:
+#         raise requests.RequestException(response=response)
+#
+#     return None
+
+class MarketingSiteWordpressAPIClient(object):
+    """
+    The marketing site API client we can use to communicate with the marketing site (Wordpress)
+    """
+    user_id = None
+    username = None
+    password = None
+    api_url = None
+    bearer_token = None
+
+    def __init__(self, marketing_site_api_username, marketing_site_api_password, marketing_site_api_url):
+        if not (marketing_site_api_username and marketing_site_api_password):
+            raise MarketingSiteAPIClientException('Marketing Site API credentials are not properly configured!')
+        self.username = marketing_site_api_username
+        self.password = marketing_site_api_password
+        self.api_url = marketing_site_api_url.strip('/')
+        self.bearer_token = BearerToken(self.api_url, self.username, self.password) # get_bearer_token(self._api_url, self._username, self._password)
+
+        # Set the user_id for this account based on the username. Need to call Wordpress directly.
+        # Need to make sure to also set https://github.com/WP-API/WP-API/issues/2300#issuecomment-299202391
+        response = self.api_session.get('{root}/wp/v2/users/'.format(root=self.api_url))
+        if response.status_code == 200:
+            response_json = response.json()
+
+            for user in response_json:
+                if user["name"] == self.username:
+                    self.user_id = user["id"]
+
+            if not self.user_id:
+                raise MarketingSiteAPIClientException(
+                {
+                    'message': 'Could not find Wordpress user "{user}" for authentication.'.format(user=self.username),
+                    'status': response.status_code,
+                    'url': response.url
+                }
+                )
+
+    @cached_property
+    def init_session(self):
+        # Login to set session cookies
+        session = requests.Session()
+        # token_headers = {
+        #     "Content-Type": "application/x-www-form-urlencoded; charset=utf-8"
+        # }
+        # session.headers.update(token_headers)
+
+        login_url = '{root}/jwt-auth/v1/token/validate'.format(root=self.api_url)
+        token_headers = self.headers
+
+        response = session.post(login_url, headers=token_headers)
+        # admin_url = '{root}/admin'.format(root=self.api_url)
+        # This is not a RESTful API so checking the status code is not enough
+        # We also check that we were redirected to the admin page
+        if not (response.status_code == 200):  # and response.url == admin_url
+            raise MarketingSiteAPIClientException(
+                {
+                    'message': 'Marketing Site (Wordpress) init_session - Validating Token!',
+                    'status': response.status_code,
+                    'url': response.url
+                }
+                )
+
+        return session
+
+    @property
+    def api_session(self):
+        self.init_session.headers.update(self.headers)
+        return self.init_session
+
+    @property
+    def headers(self):
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + self.bearer_token.token(),
+        }

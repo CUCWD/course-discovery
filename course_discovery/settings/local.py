@@ -32,7 +32,7 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 # END EMAIL CONFIGURATION
 
 # Determine which requests should render Django Debug Toolbar
-INTERNAL_IPS = ('127.0.0.1',)
+INTERNAL_IPS = ('courses.localhost',)
 
 # AUTHENTICATION
 SOCIAL_AUTH_REDIRECT_IS_HTTPS = False
@@ -47,7 +47,7 @@ ENABLE_AUTO_AUTH = True
 
 JWT_AUTH.update({
     'JWT_SECRET_KEY': 'lms-secret',
-    'JWT_ISSUER': 'http://127.0.0.1:8000/oauth2',
+    'JWT_ISSUER': 'http://courses.localhost:8000/oauth2',
     'JWT_AUDIENCE': 'lms-key',
     'JWT_VERIFY_AUDIENCE': False,
 })

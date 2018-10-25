@@ -1,4 +1,6 @@
 import datetime
+from datetime import timedelta
+from copy import deepcopy
 import itertools
 import logging
 from collections import defaultdict
@@ -26,6 +28,14 @@ from course_discovery.apps.course_metadata.publishers import (
     CourseRunMarketingSitePublisher,
     ProgramMarketingSitePublisher
 )
+from course_discovery.apps.course_metadata.publishers_wordpress import (
+    SequentialMarketingSiteWordpressPublisher,
+    ChapterMarketingSiteWordpressPublisher,
+    CourseRunMarketingSiteWordpressPublisher,
+    ProgramMarketingSiteWordpressPublisher,
+    OrganizationMarketingSiteWordpressPublisher
+)
+
 from course_discovery.apps.course_metadata.query import CourseQuerySet, CourseRunQuerySet, ProgramQuerySet
 from course_discovery.apps.course_metadata.utils import UploadToFieldNamePath, clean_query, custom_render_variations
 from course_discovery.apps.ietf_language_tags.models import LanguageTag
@@ -157,6 +167,9 @@ class Organization(TimeStampedModel):
     """ Organization model. """
     partner = models.ForeignKey(Partner, null=True, blank=False)
     uuid = models.UUIDField(blank=False, null=False, default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
     key = models.CharField(max_length=255)
     name = models.CharField(max_length=255)
     marketing_url_path = models.CharField(max_length=255, null=True, blank=True)
@@ -174,6 +187,9 @@ class Organization(TimeStampedModel):
         help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
     )
 
+    slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    hidden = models.BooleanField(default=False)
+
     class Meta:
         unique_together = (
             ('partner', 'key'),
@@ -189,6 +205,71 @@ class Organization(TimeStampedModel):
             return urljoin(self.partner.marketing_site_url_root, self.marketing_url_path)
 
         return None
+
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": None,
+            "wordpress": OrganizationMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def _publish_marketing(self):
+        publisher = self._locate_publisher(self.partner)  # OrganizationMarketingSiteWordpressPublisher(self.course.partner)
+        previous_obj = None  # Organization.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
+    def save(self, *args, **kwargs):
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_publishable = (
+                self.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+                # Pop to clean the kwargs for the base class save call below
+                not suppress_publication
+        )
+
+        if is_publishable:
+
+            with transaction.atomic():
+                super(Organization, self).save(*args, **kwargs)
+
+                # Need this `on_commit` to commit transaction to database so that the object provided within the
+                # marketing publisher gets updates.
+                transaction.on_commit(self._publish_marketing)
+
+        else:
+            super(Organization, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site')  # and
+            # Pop to clean the kwargs for the base class save call below
+            # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Organization, self).delete(using)
+        else:
+            super(Organization, self).delete(using)
 
 
 class Person(TimeStampedModel):
@@ -348,6 +429,13 @@ class Course(TimeStampedModel):
 class CourseRun(TimeStampedModel):
     """ CourseRun model. """
     uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+    # wordpress_media_id = models.BigIntegerField(
+    #     editable=True, null=True, blank=True,
+    #     help_text=_('This is the Wordpress Media id generated from the marketing frontend. Override here if it selected'
+    #                 ' the wrong image'))
     course = models.ForeignKey(Course, related_name='course_runs')
     key = models.CharField(max_length=255, unique=True)
     status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=CourseRunStatus.choices,
@@ -372,12 +460,15 @@ class CourseRun(TimeStampedModel):
             "Full description specific for this run of a course. Leave this value blank to default to "
             "the parent course's full_description attribute."))
     staff = SortedManyToManyField(Person, blank=True, related_name='courses_staffed')
-    min_effort = models.PositiveSmallIntegerField(
+    min_effort = models.DurationField(
         null=True, blank=True,
-        help_text=_('Estimated minimum number of hours per week needed to complete a course run.'))
-    max_effort = models.PositiveSmallIntegerField(
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number '
+                    'is calculated automatically by the Chapters added.'))
+
+    max_effort = models.DurationField(
         null=True, blank=True,
-        help_text=_('Estimated maximum number of hours per week needed to complete a course run.'))
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number '
+                    'is calculated automatically by the Chapters added.'))
     weeks_to_complete = models.PositiveSmallIntegerField(
         null=True, blank=True,
         help_text=_('Estimated number of weeks needed to complete this course run.'))
@@ -390,6 +481,7 @@ class CourseRun(TimeStampedModel):
     video = models.ForeignKey(Video, default=None, null=True, blank=True)
     slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     hidden = models.BooleanField(default=False)
+    invitation_only = models.BooleanField(default=False)
     mobile_available = models.BooleanField(default=False)
     course_overridden = models.BooleanField(
         default=False,
@@ -402,6 +494,8 @@ class CourseRun(TimeStampedModel):
         blank=True,
         help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
     )
+
+    chapters = SortedManyToManyField('Chapter', related_name='course_runs')
 
     objects = CourseRunQuerySet.as_manager()
 
@@ -601,6 +695,41 @@ class CourseRun(TimeStampedModel):
     def __str__(self):
         return '{key}: {title}'.format(key=self.key, title=self.title)
 
+    def _calculate_effort_duration(self):
+        """ Loops through all related Chapter objects and updates the CourseRun `min_effort` and `max_effort` fields. """
+        self.min_effort = timedelta(hours=0, minutes=0, seconds=0)
+        self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
+
+        if self.id:
+            for chapter in self.chapters.all():
+                if not chapter.hidden:
+                    if chapter.min_effort:
+                        self.min_effort = self.min_effort + chapter.min_effort
+
+                    if chapter.max_effort:
+                        self.max_effort = self.max_effort + chapter.max_effort
+
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": CourseRunMarketingSitePublisher,
+            "wordpress": CourseRunMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def _publish_marketing(self):
+        publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
+        previous_obj = None #CourseRun.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
     def save(self, *args, **kwargs):
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_publishable = (
@@ -611,14 +740,51 @@ class CourseRun(TimeStampedModel):
         )
 
         if is_publishable:
-            publisher = CourseRunMarketingSitePublisher(self.course.partner)
-            previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
 
             with transaction.atomic():
+                self._calculate_effort_duration()
+
                 super(CourseRun, self).save(*args, **kwargs)
-                publisher.publish_obj(self, previous_obj=previous_obj)
+
+                # Need this `on_commit` to commit transaction to database so that the object provided within the
+                # marketing publisher gets updates.
+                transaction.on_commit(self._publish_marketing)
         else:
             super(CourseRun, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.course.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+
+                for chapter in self.chapters.all():
+
+                    if chapter:
+                        for sequential in chapter.sequentials.all():
+                            if sequential:
+                                sequential.delete()
+
+                        chapter.delete()
+
+                # self.course.delete()
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(CourseRun, self).delete(using)
+        else:
+            super(CourseRun, self).delete(using)
 
 
 class SeatType(TimeStampedModel):
@@ -669,6 +835,306 @@ class Seat(TimeStampedModel):
         unique_together = (
             ('course_run', 'type', 'currency', 'credit_provider')
         )
+
+
+class Chapter(TimeStampedModel):
+    """ Chapter model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+    course_run = models.ForeignKey(CourseRun, related_name='chapters_accessor')
+    location = models.CharField(max_length=255, unique=True)
+    lms_web_url = models.URLField(null=True, blank=True)
+    min_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number'
+                    'is calculated automatically by the Sequentials added.'))
+
+    max_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number'
+                    'is calculated automatically by the Sequentials added.'))
+
+    title = models.CharField(max_length=255, default=None, null=True, blank=True)
+    goal_override = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_(
+            "Goal description specific for this chapter within the course."))
+
+    sequentials = SortedManyToManyField('Sequential', related_name='chapters')
+
+    slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    hidden = models.BooleanField(default=False)
+
+    course_order = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text=_('Order presented within the course.'))
+
+    def __str__(self):
+        return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    def _calculate_effort_duration(self):
+        """ Loops through all related Sequential objects and updates the Chapter `min_effort` and `max_effort` fields. """
+        self.min_effort = timedelta(hours=0, minutes=0, seconds=0)
+        self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
+
+        if self.id:
+            for sequential in self.sequentials.all():
+                if not sequential.hidden:
+                    if sequential.min_effort:
+                        self.min_effort = self.min_effort + sequential.min_effort
+
+                    if sequential.max_effort:
+                        self.max_effort = self.max_effort + sequential.max_effort
+
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": None,
+            "wordpress": ChapterMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def _publish_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # ChapterMarketingSitePublisher(self.course.partner)
+        previous_obj = None # Chapter.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
+        # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
+        # at the CourseRun level with correct Chapter includes.
+        for related_courseruns in self.course_runs.all():
+            if related_courseruns:
+                related_courseruns.save(suppress_publication=True)
+
+                logger.info(
+                    "Saved related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
+                        related_courseruns.title_override, related_courseruns.key, self.title, self.location
+                    )
+                )
+
+    def save(self, *args, **kwargs):
+        #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_publishable = (
+            self.course_run.course.partner.has_marketing_site and
+            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            # Pop to clean the kwargs for the base class save call below
+            not suppress_publication
+        )
+
+        if is_publishable:
+
+            with transaction.atomic():
+                self._calculate_effort_duration()
+
+                super(Chapter, self).save(*args, **kwargs)
+
+                # Need this `on_commit` to commit transaction to database so that the object provided within the
+                # marketing publisher gets updates.
+                transaction.on_commit(self._publish_marketing)
+
+        else:
+            super(Chapter, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.course_run.course.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+                # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+                # at the Chapter level with correct Sequential includes. Here we are removing the sequential.
+                for related_courserun in self.course_runs.all():
+                    if related_courserun:
+                        related_courserun.chapters.remove(self)
+                    # related_courserun.save()
+                    #
+                    # logger.info(
+                    #     "Saved related Course Run `{}` {} since Chapter `{}` {} was deleted.".format(
+                    #         related_courserun.title, related_courserun.key, self.title, self.location
+                    #     )
+                    # )
+
+                for sequential in self.sequentials.all():
+                    if sequential:
+                        sequential.delete()
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Chapter, self).delete(using)
+        else:
+            super(Chapter, self).delete(using)
+
+
+class Sequential(TimeStampedModel):
+    """ Sequential model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+    course_run = models.ForeignKey(CourseRun, related_name='sequentials_accessor')
+    location = models.CharField(max_length=255, unique=True)
+    lms_web_url = models.URLField(null=True, blank=True)
+    min_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this sequential.'))
+
+    max_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this sequential.'))
+
+    title = models.CharField(max_length=255, default=None, null=True, blank=True)
+
+    objectives = SortedManyToManyField('Objective', related_name='sequentials')
+
+    """ 
+    Todo: May want to consider adding in the additional fields provided by the Block REST API for this type.
+    format: Activity, Assessment, Exam
+    graded: true, false
+    """
+
+    slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    hidden = models.BooleanField(default=False)
+
+    chapter_order = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text=_('Order presented in the Chapter within the course.'))
+
+    def __str__(self):
+        return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": None,
+            "wordpress": SequentialMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def _publish_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        previous_obj = None #Sequential.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
+        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+        # at the Chapter level with correct Sequential includes.
+        for related_chapter in self.chapters.all():
+            if related_chapter:
+                related_chapter.save(suppress_publication=True)
+
+                logger.info(
+                    "Saved related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
+                        related_chapter.title, related_chapter.location, self.title, self.location
+                    )
+                )
+
+    def save(self, *args, **kwargs):
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_publishable = (
+            self.course_run.course.partner.has_marketing_site and
+            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            # Pop to clean the kwargs for the base class save call below
+            not suppress_publication
+        )
+
+        if is_publishable:
+
+            with transaction.atomic():
+                super(Sequential, self).save(*args, **kwargs)
+
+                # Need this `on_commit` to commit transaction to database so that the object provided within the
+                # marketing publisher gets updates.
+                transaction.on_commit(self._publish_marketing)
+
+        else:
+            super(Sequential, self).save(*args, **kwargs)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.course_run.course.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+                # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+                # at the Chapter level with correct Sequential includes. Here we are removing the sequential.
+                for related_chapter in self.chapters.all():
+                    if related_chapter:
+                        related_chapter.sequentials.remove(self)
+                    # related_chapter.save()
+                    #
+                    # logger.info(
+                    #     "Saved related Chapter `{}` {} since Sequential `{}` {} was deleted.".format(
+                    #         related_chapter.title, related_chapter.location, self.title, self.location
+                    #     )
+                    # )
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Sequential, self).delete(using)
+        else:
+            super(Sequential, self).delete(using)
+
+
+class Objective(TimeStampedModel):
+    """ Objective model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    description = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_("Description specific for this objective."))
+
+    def __str__(self):
+        return '{description}'.format(description=self.description)
+
+    def save(self, *args, **kwargs):
+        super(Objective, self).save(*args, **kwargs)
+        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+        # at the Chapter level with correct Sequential includes.
+        for related_sequential in self.sequentials.all():
+            if related_sequential:
+                related_sequential.save()
+
+                logger.info(
+                    "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
+                        related_sequential.title, related_sequential.location, self.description
+                    )
+                )
 
 
 class Endorsement(TimeStampedModel):

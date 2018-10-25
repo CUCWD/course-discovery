@@ -8,7 +8,7 @@ LOGGING['handlers']['local'] = {
 }
 
 # Determine which requests should render Django Debug Toolbar
-INTERNAL_IPS = ('127.0.0.1',)
+INTERNAL_IPS = ('courses.localhost',)  # 127.0.0.1
 
 HAYSTACK_CONNECTIONS['default']['URL'] = 'http://edx.devstack.elasticsearch:9200/'
 
@@ -24,3 +24,10 @@ COMPRESS_ENABLED = False
 # Lastly, see if the developer has any local overrides.
 if os.path.isfile(join(dirname(abspath(__file__)), 'private.py')):
     from .private import *  # pylint: disable=import-error
+
+JWT_AUTH.update({
+    'JWT_SECRET_KEY': SOCIAL_AUTH_EDX_OIDC_SECRET,
+    'JWT_ISSUER': 'http://courses.localhost:8000/oauth2',
+    'JWT_AUDIENCE': SOCIAL_AUTH_EDX_OIDC_KEY,
+    'JWT_VERIFY_AUDIENCE': False,
+})
