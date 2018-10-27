@@ -172,6 +172,7 @@ class ChapterAdmin(admin.ModelAdmin):
         return actions
 
     delete_error = False
+    save_error = False
 
     def delete_selected(self, request, obj):
         for o in obj.all():
@@ -185,6 +186,18 @@ class ChapterAdmin(admin.ModelAdmin):
 
                 msg = DELETION_FAILURE_MSG_TPL.format(model='chapter')  # pylint: disable=no-member
                 messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            obj.status = ChapterStatus.Unpublished
+            obj.save(is_published=False)
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing chapter [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='chapter')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Sequential)
