@@ -150,14 +150,14 @@ class CourseRunAdmin(admin.ModelAdmin):
 class ChapterAdmin(admin.ModelAdmin):
     form = ChapterAdminForm
     list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'course_order', 'location')
-    list_filter = ('hidden', 'title',)
+    list_filter = ('hidden', 'status', 'title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id', 'min_effort', 'max_effort',)
     search_fields = ('uuid', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'course_run', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
+        'course_run', 'location', 'status', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
         'course_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
     )
 
@@ -188,14 +188,14 @@ class ChapterAdmin(admin.ModelAdmin):
 class SequentialAdmin(admin.ModelAdmin):
     form = SequentialAdminForm
     list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'chapter_order', 'location',)
-    list_filter = ('hidden', 'title',)
+    list_filter = ('hidden', 'status', 'title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id',)
     search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'course_run', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
+        'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
         'chapter_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
     )
 
@@ -207,6 +207,7 @@ class SequentialAdmin(admin.ModelAdmin):
         return actions
 
     delete_error = False
+    save_error = False
 
     def delete_selected(self, request, obj):
         for o in obj.all():
@@ -220,6 +221,18 @@ class SequentialAdmin(admin.ModelAdmin):
 
                 msg = DELETION_FAILURE_MSG_TPL.format(model='sequential')  # pylint: disable=no-member
                 messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            obj.status = SequentialStatus.Unpublished
+            obj.save(is_published=False)
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing sequential [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='sequential')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Objective)

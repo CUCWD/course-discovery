@@ -8,7 +8,7 @@ import waffle
 from bs4 import BeautifulSoup
 from django.utils.text import slugify
 
-from course_discovery.apps.course_metadata.choices import CourseRunStatus
+from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, CourseRunStatus
 from course_discovery.apps.course_metadata.exceptions import (
     AliasCreateError, AliasDeleteError, FormRetrievalError, NodeCreateError, NodeDeleteError, NodeEditError,
     NodeLookupError, PostLookupError, PostCreateError, PostEditError, PostDeleteError #, MediaLookupError, MediaCreateError
@@ -506,21 +506,26 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        logger.info('Publishing lesson [%s] to marketing site (Wordpress) ...', obj.location)
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None:
+            logger.info('Publishing lesson [%s] to marketing site (Wordpress) ...', obj.location)
 
-        # if previous_obj and obj.status != previous_obj.status:
-        post_data = self.serialize_obj(obj)
+            post_data = self.serialize_obj(obj)
 
-        try:
-            post_id = self.post_id(obj)
-            self.edit_post(post_id, post_data)
+            try:
+                post_id = self.post_id(obj)
+                self.edit_post(post_id, post_data)
 
-        except (PostLookupError) as error:
-            post_id = self.create_post(post_data)
-            if post_id:
-                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
-                obj.wordpress_post_id = post_id
-                obj.save(suppress_publication=True)
+            except (PostLookupError) as error:
+                post_id = self.create_post(post_data)
+                if post_id:
+                    logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                    obj.wordpress_post_id = post_id
+
+            obj.save(suppress_publication=True, is_published=True)
+        else:
+            logger.info('Not publishing lesson [%s] to marketing site (Wordpress) since status [%s]'
+                        ' of previous obj has not changed ...', obj.location, previous_obj.status if previous_obj else "unavailable")
+
 
     def serialize_obj(self, obj):
         """
@@ -583,21 +588,25 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        logger.info('Publishing module [%s] to marketing site (Wordpress) ...', obj.location)
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None:
+            logger.info('Publishing module [%s] to marketing site (Wordpress) ...', obj.location)
 
-        # if previous_obj and obj.status != previous_obj.status:
-        post_data = self.serialize_obj(obj)
+            post_data = self.serialize_obj(obj)
 
-        try:
-            post_id = self.post_id(obj)
-            self.edit_post(post_id, post_data)
+            try:
+                post_id = self.post_id(obj)
+                self.edit_post(post_id, post_data)
 
-        except (PostLookupError) as error:
-            post_id = self.create_post(post_data)
-            if post_id:
-                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
-                obj.wordpress_post_id = post_id
-                obj.save(suppress_publication=True)
+            except (PostLookupError) as error:
+                post_id = self.create_post(post_data)
+                if post_id:
+                    logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                    obj.wordpress_post_id = post_id
+
+            obj.save(suppress_publication=True, is_published=True)
+        else:
+            logger.info('Not publishing module [%s] to marketing site (Wordpress) since status [%s]'
+                        ' of previous obj has not changed ...', obj.location, previous_obj.status if previous_obj else "unavailable")
 
     def serialize_obj(self, obj):
         """
@@ -671,25 +680,25 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        logger.info('Publishing course run [%s] to marketing site (Wordpress) ...', obj.key)
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None:
+            logger.info('Publishing course run [%s] to marketing site (Wordpress) ...', obj.key)
 
-        # if previous_obj and obj.status != previous_obj.status:
-        # post_id = self.post_id(obj)
+            post_data = self.serialize_obj(obj)
 
-        post_data = self.serialize_obj(obj)
+            try:
+                post_id = self.post_id(obj)
+                self.edit_post(post_id, post_data)
 
-        # self.edit_post(post_id, post_data)
+            except (PostLookupError) as error:
+                post_id = self.create_post(post_data)
+                if post_id:
+                    logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                    obj.wordpress_post_id = post_id
 
-        try:
-            post_id = self.post_id(obj)
-            self.edit_post(post_id, post_data)
-
-        except (PostLookupError) as error:
-            post_id = self.create_post(post_data)
-            if post_id:
-                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
-                obj.wordpress_post_id = post_id
-                obj.save(suppress_publication=True)
+            obj.save(suppress_publication=True, is_published=True)
+        else:
+            logger.info('Not publishing course run [%s] to marketing site (Wordpress) since status [%s]'
+                        ' of previous obj has not changed ...', obj.key, previous_obj.status if previous_obj else "unavailable")
 
 
     #
