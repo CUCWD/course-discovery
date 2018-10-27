@@ -623,7 +623,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
         data['slug'] = obj.slug
 
         sequentials = []
-        for sequential in obj.sequentials.all():
+        for sequential in obj.sequentials.all().order_by('chapter_order'):
             try:
                 sequential_post_id = self.post_id(sequential)
 
@@ -782,7 +782,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         #     obj.save()
 
         chapters = []
-        for chapter in obj.chapters.all():
+        for chapter in obj.chapters.all().order_by('course_order'):
             try:
                 chapter_post_id = self.post_id(chapter)
 
