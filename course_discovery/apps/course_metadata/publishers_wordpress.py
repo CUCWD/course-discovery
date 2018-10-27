@@ -553,11 +553,18 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
             }
         )
 
+        module_post_id = None
+        for related_chapter in obj.chapters.all():
+            if related_chapter and obj.course_run.key == related_chapter.course_run.key:
+                module_post_id = related_chapter.wordpress_post_id
+
         data['fields'][self.post_lookup_meta_group].update(
             {
                 # 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
                 # 'card_image_url': obj.card_image_url
-                'lms_web_url': obj.lms_web_url
+                'lms_web_url': obj.lms_web_url,
+                'course_post': obj.course_run.wordpress_post_id,
+                'module_post': module_post_id,
             }
         )
 
@@ -649,7 +656,8 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
             {
                 # 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
                 # 'card_image_url': obj.card_image_url
-                'lms_web_url': obj.lms_web_url
+                'lms_web_url': obj.lms_web_url,
+                'course_post': obj.course_run.wordpress_post_id,
             }
         )
 
