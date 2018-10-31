@@ -187,7 +187,7 @@ class ChapterAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         try:
             obj.status = ChapterStatus.Unpublished
-            obj.save(is_published=False)
+            obj.save(is_published=False, is_child_update=True)
         except (MarketingSitePublisherException, MarketingSiteAPIClientException):
             self.save_error = True
 
@@ -238,7 +238,7 @@ class SequentialAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         try:
             obj.status = SequentialStatus.Unpublished
-            obj.save(is_published=False)
+            obj.save(is_published=False, is_child_update=True)
         except (MarketingSitePublisherException, MarketingSiteAPIClientException):
             self.save_error = True
 
