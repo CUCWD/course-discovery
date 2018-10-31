@@ -61,3 +61,6 @@ class PostDeleteError(MarketingSitePublisherException):
 #
 # class MediaCreateError(MarketingSitePublisherException):
 #     pass
+
+class TagCreateError(MarketingSitePublisherException):
+    pass

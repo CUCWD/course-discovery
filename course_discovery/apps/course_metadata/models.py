@@ -11,6 +11,7 @@ import pytz
 import waffle
 from django.db import models, transaction
 from django.db.models.query_utils import Q
+from django.db.models.signals import m2m_changed
 from django.utils.functional import cached_property
 from django.utils.translation import ugettext_lazy as _
 from django_extensions.db.fields import AutoSlugField
@@ -493,7 +494,7 @@ class CourseRun(TimeStampedModel):
 
     tags = TaggableManager(
         blank=True,
-        help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
+        help_text=_('These tags are automatically generated from the Chapters that it has references too.'),
     )
 
     chapters = SortedManyToManyField('Chapter', related_name='course_runs')
@@ -710,6 +711,17 @@ class CourseRun(TimeStampedModel):
                     if chapter.max_effort:
                         self.max_effort = self.max_effort + chapter.max_effort
 
+    def _update_tags(self):
+        """ Loops through all referenced Chapters and updates the tags to be relevant for this CourseRun. """
+        tags = []
+        for chapter in self.chapters.all():
+            if chapter.tags:
+                for tag in chapter.tags.names():
+                    if tag not in tags:
+                        tags.append(tag)
+
+        self.tags.set(*tags, clear=True)
+
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
         switcher = {
@@ -737,6 +749,7 @@ class CourseRun(TimeStampedModel):
         )
 
         self._calculate_effort_duration()
+        self._update_tags()
 
         if is_publishable:
 
@@ -865,6 +878,11 @@ class Chapter(TimeStampedModel):
         help_text=_(
             "Goal description specific for this chapter within the course."))
 
+    tags = TaggableManager(
+        blank=True,
+        help_text=_('These tags are automatically generated from the Sequentials that it has references too.'),
+    )
+
     sequentials = SortedManyToManyField('Sequential', related_name='chapters')
 
     slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
@@ -890,6 +908,17 @@ class Chapter(TimeStampedModel):
 
                     if sequential.max_effort:
                         self.max_effort = self.max_effort + sequential.max_effort
+
+    def _update_tags(self):
+        """ Loops through all referenced Sequentials and updates the tags to be relevant for this Chapter. """
+        tags = []
+        for sequential in self.sequentials.all():
+            if sequential.tags:
+                for tag in sequential.tags.names():
+                    if tag not in tags:
+                        tags.append(tag)
+
+        self.tags.set(*tags, clear=True)
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
@@ -919,6 +948,7 @@ class Chapter(TimeStampedModel):
         )
 
         self._calculate_effort_duration()
+        self._update_tags()
 
         if is_publishable:
 
@@ -935,17 +965,18 @@ class Chapter(TimeStampedModel):
 
             super(Chapter, self).save(*args, **kwargs)
 
-        # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
+            # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
         # at the CourseRun level with correct Chapter includes.
-        for related_courseruns in self.course_runs.all():
-            if related_courseruns:
+        for related_courserun in self.course_runs.all():
+            if related_courserun:
                 logger.info(
                     "Saving related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
-                        related_courseruns.title_override, related_courseruns.key, self.title, self.location
+                        related_courserun.title_override, related_courserun.key, self.title, self.location
                     )
                 )
-                related_courseruns.status = CourseRunStatus.Unpublished
-                related_courseruns.save() # suppress_publication=True)
+
+                related_courserun.status = CourseRunStatus.Unpublished
+                related_courserun.save() # suppress_publication=True)
 
 
     def _delete_marketing(self):
@@ -1008,6 +1039,11 @@ class Sequential(TimeStampedModel):
         help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this sequential.'))
 
     title = models.CharField(max_length=255, default=None, null=True, blank=True)
+
+    tags = TaggableManager(
+        blank=True,
+        help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
+    )
 
     objectives = SortedManyToManyField('Objective', related_name='sequentials')
 
@@ -1077,9 +1113,9 @@ class Sequential(TimeStampedModel):
                         related_chapter.title, related_chapter.location, self.title, self.location
                     )
                 )
+
                 related_chapter.status = ChapterStatus.Unpublished
                 related_chapter.save() # suppress_publication=True)
-
 
     def _delete_marketing(self):
         publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
@@ -1115,6 +1151,101 @@ class Sequential(TimeStampedModel):
                 super(Sequential, self).delete(using)
         else:
             super(Sequential, self).delete(using)
+
+
+def m2m_tags_changed(sender, **kwargs):
+    """
+    Update Sequential tags on the publisher after Sequential.save() has been called.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Sequential):
+
+        # Do something here.
+        logger.info(
+            "Tags are being saved for Sequential `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = SequentialStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False)
+
+
+def m2m_sequentials_changed(sender, **kwargs):
+    """
+    Update Chapter tags on the publisher when reference has changed for Sequentials following a Chapter.save() complete.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Chapter):
+
+        # Do something here.
+        logger.info(
+            "Sequentials are being saved for Chapter `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = ChapterStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False)
+
+
+def m2m_chapters_changed(sender, **kwargs):
+    """
+    Update CourseRun tags on the publisher when reference has changed for Chapters following a CourseRun.save() complete.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, CourseRun):
+
+        # Do something here.
+        logger.info(
+            "Chapters are being saved for CourseRun `{}` {}.".format(
+                instance.key, instance.title
+            )
+        )
+
+        instance.status = CourseRunStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False)
+
+
+m2m_changed.connect(m2m_tags_changed, sender=Sequential.tags.through)
+m2m_changed.connect(m2m_sequentials_changed, sender=Chapter.sequentials.through)
+m2m_changed.connect(m2m_chapters_changed, sender=CourseRun.chapters.through)
 
 
 class Objective(TimeStampedModel):

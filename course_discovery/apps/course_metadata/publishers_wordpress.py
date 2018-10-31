@@ -11,7 +11,7 @@ from django.utils.text import slugify
 from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, CourseRunStatus
 from course_discovery.apps.course_metadata.exceptions import (
     AliasCreateError, AliasDeleteError, FormRetrievalError, NodeCreateError, NodeDeleteError, NodeEditError,
-    NodeLookupError, PostLookupError, PostCreateError, PostEditError, PostDeleteError #, MediaLookupError, MediaCreateError
+    NodeLookupError, PostLookupError, PostCreateError, PostEditError, PostDeleteError, TagCreateError #, MediaLookupError, MediaCreateError
 )
 from course_discovery.apps.course_metadata.utils import MarketingSiteWordpressAPIClient
 
@@ -68,6 +68,7 @@ class BaseMarketingSiteWordpressPublisher:
 
         self.rest_api_base = '{base}/wp/v2'.format(base=self.client.api_url) # urljoin(self.client.api_url, '/acf/v3/')
         self.media_api_base = '{base}/media'.format(base=self.rest_api_base)
+        self.tag_api_base = '{base}/edx-tag'.format(base=self.rest_api_base)
         self.post_organization_api_base = '{base}/organization'.format(base=self.rest_api_base)
         self.post_course_api_base = '{base}/course'.format(base=self.rest_api_base) #urljoin(self.rest_api_base, 'course')
         self.post_module_api_base = '{base}/module'.format(base=self.rest_api_base)
@@ -249,6 +250,33 @@ class BaseMarketingSiteWordpressPublisher:
     #
     #     raise MediaLookupError({'response_status': 'Could not locate Wordpress media id', 'filename': filename})
 
+    def create_tag(self, tag_data):
+        """
+        Create a Wordpress tag.
+
+        Arguments:
+            tag_data (dict): Data to POST to Wordpress for tag creation.
+
+        Returns:
+            str: The ID of the created tag.
+
+        Raises:
+            PostCreateError: If the POST to Wordpress fails.
+        """
+        post_url = '{base}'.format(base=self.tag_api_base)
+        tag_data = json.dumps(tag_data)
+
+        response = self.client.api_session.post(post_url, data=tag_data)
+
+        if response.status_code == 201:
+            return response.json()['id']
+        else:
+            raise TagCreateError(
+                {
+                    'response_text': response.text,
+                    'response_status': response.status_code
+                }
+            )
 
     def post_id(self, obj):
         """
@@ -541,6 +569,25 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
         data['title'] = obj.title
         data['slug'] = obj.slug
 
+        tags = []
+        for tag in obj.tags.names():
+            tag_data = {
+                "description" : "",
+                "name" : tag,
+                "slug" : slugify(tag),
+                "meta" : []
+            }
+
+            try:
+                wp_tag = self.create_tag(tag_data)
+            except (TagCreateError) as error:
+                logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+            if isinstance(wp_tag, int):
+                tags.append(wp_tag)
+        data['edx-tag'] = tags
+
         objectives = []
         for objective in obj.objectives.all():
             objectives.append({ "objective": objective.description })
@@ -628,6 +675,25 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
+
+        tags = []
+        for tag in obj.tags.names():
+            tag_data = {
+                "description" : "",
+                "name" : tag,
+                "slug" : slugify(tag),
+                "meta" : []
+            }
+
+            try:
+                wp_tag = self.create_tag(tag_data)
+            except (TagCreateError) as error:
+                logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+            if isinstance(wp_tag, int):
+                tags.append(wp_tag)
+        data['edx-tag'] = tags
 
         sequentials = []
         for sequential in obj.sequentials.all().order_by('chapter_order'):
@@ -788,6 +854,25 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         #     # Create media content on Wordpress if it doesn't exist.
         #     obj.wordpress_media_id = data['fields']['hero'] = self.create_media(self.serialize_media(obj))
         #     obj.save()
+
+        tags = []
+        for tag in obj.tags.names():
+            tag_data = {
+                "description" : "",
+                "name" : tag,
+                "slug" : slugify(tag),
+                "meta" : []
+            }
+
+            try:
+                wp_tag = self.create_tag(tag_data)
+            except (TagCreateError) as error:
+                logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+            if isinstance(wp_tag, int):
+                tags.append(wp_tag)
+        data['edx-tag'] = tags
 
         chapters = []
         for chapter in obj.chapters.all().order_by('course_order'):
