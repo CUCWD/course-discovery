@@ -11,7 +11,7 @@ from django.utils.text import slugify
 from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, CourseRunStatus
 from course_discovery.apps.course_metadata.exceptions import (
     AliasCreateError, AliasDeleteError, FormRetrievalError, NodeCreateError, NodeDeleteError, NodeEditError,
-    NodeLookupError, PostLookupError, PostCreateError, PostEditError, PostDeleteError #, MediaLookupError, MediaCreateError
+    NodeLookupError, PostLookupError, PostCreateError, PostEditError, PostDeleteError, TagCreateError #, MediaLookupError, MediaCreateError
 )
 from course_discovery.apps.course_metadata.utils import MarketingSiteWordpressAPIClient
 
@@ -68,6 +68,7 @@ class BaseMarketingSiteWordpressPublisher:
 
         self.rest_api_base = '{base}/wp/v2'.format(base=self.client.api_url) # urljoin(self.client.api_url, '/acf/v3/')
         self.media_api_base = '{base}/media'.format(base=self.rest_api_base)
+        self.tag_api_base = '{base}/edx-tag'.format(base=self.rest_api_base)
         self.post_organization_api_base = '{base}/organization'.format(base=self.rest_api_base)
         self.post_course_api_base = '{base}/course'.format(base=self.rest_api_base) #urljoin(self.rest_api_base, 'course')
         self.post_module_api_base = '{base}/module'.format(base=self.rest_api_base)
@@ -249,6 +250,33 @@ class BaseMarketingSiteWordpressPublisher:
     #
     #     raise MediaLookupError({'response_status': 'Could not locate Wordpress media id', 'filename': filename})
 
+    def create_tag(self, tag_data):
+        """
+        Create a Wordpress tag.
+
+        Arguments:
+            tag_data (dict): Data to POST to Wordpress for tag creation.
+
+        Returns:
+            str: The ID of the created tag.
+
+        Raises:
+            PostCreateError: If the POST to Wordpress fails.
+        """
+        post_url = '{base}'.format(base=self.tag_api_base)
+        tag_data = json.dumps(tag_data)
+
+        response = self.client.api_session.post(post_url, data=tag_data)
+
+        if response.status_code == 201:
+            return response.json()['id']
+        else:
+            raise TagCreateError(
+                {
+                    'response_text': response.text,
+                    'response_status': response.status_code
+                }
+            )
 
     def post_id(self, obj):
         """
@@ -492,7 +520,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
     post_lookup_field = 'data_locator'
     post_lookup_meta_group = 'open_edx_meta'
 
-    def publish_obj(self, obj, previous_obj=None):
+    def publish_obj(self, obj, previous_obj=None, ignore_tag_creation=True):
         """
         Publish a Sequential to the marketing site.
 
@@ -509,7 +537,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
         if previous_obj and obj.status != previous_obj.status or previous_obj == None:
             logger.info('Publishing lesson [%s] to marketing site (Wordpress) ...', obj.location)
 
-            post_data = self.serialize_obj(obj)
+            post_data = self.serialize_obj(obj, ignore_tag_creation)
 
             try:
                 post_id = self.post_id(obj)
@@ -527,7 +555,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
                         ' of previous obj has not changed ...', obj.location, previous_obj.status if previous_obj else "unavailable")
 
 
-    def serialize_obj(self, obj):
+    def serialize_obj(self, obj, ignore_tag_creation=True):
         """
         Serialize the Sequential instance to be published to Wordpress as custom post type 'lesson'.
 
@@ -540,6 +568,26 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
+
+        if not ignore_tag_creation:
+            tags = []
+            for tag in obj.tags.names():
+                tag_data = {
+                    "description" : "",
+                    "name" : tag,
+                    "slug" : slugify(tag),
+                    "meta" : []
+                }
+
+                try:
+                    wp_tag = self.create_tag(tag_data)
+                except (TagCreateError) as error:
+                    logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                    wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+                if isinstance(wp_tag, int):
+                    tags.append(wp_tag)
+            data['edx-tag'] = tags
 
         objectives = []
         for objective in obj.objectives.all():
@@ -581,7 +629,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
     post_lookup_field = 'data_locator'
     post_lookup_meta_group = 'open_edx_meta'
 
-    def publish_obj(self, obj, previous_obj=None):
+    def publish_obj(self, obj, previous_obj=None, ignore_tag_creation=True):
         """
         Publish a Chapter to the marketing site.
 
@@ -598,7 +646,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
         if previous_obj and obj.status != previous_obj.status or previous_obj == None:
             logger.info('Publishing module [%s] to marketing site (Wordpress) ...', obj.location)
 
-            post_data = self.serialize_obj(obj)
+            post_data = self.serialize_obj(obj, ignore_tag_creation)
 
             try:
                 post_id = self.post_id(obj)
@@ -615,7 +663,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
             logger.info('Not publishing module [%s] to marketing site (Wordpress) since status [%s]'
                         ' of previous obj has not changed ...', obj.location, previous_obj.status if previous_obj else "unavailable")
 
-    def serialize_obj(self, obj):
+    def serialize_obj(self, obj, ignore_tag_creation=True):
         """
         Serialize the Chapter instance to be published to Wordpress as custom post type 'module'.
 
@@ -628,6 +676,26 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
+
+        if not ignore_tag_creation:
+            tags = []
+            for tag in obj.tags.names():
+                tag_data = {
+                    "description" : "",
+                    "name" : tag,
+                    "slug" : slugify(tag),
+                    "meta" : []
+                }
+
+                try:
+                    wp_tag = self.create_tag(tag_data)
+                except (TagCreateError) as error:
+                    logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                    wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+                if isinstance(wp_tag, int):
+                    tags.append(wp_tag)
+            data['edx-tag'] = tags
 
         sequentials = []
         for sequential in obj.sequentials.all().order_by('chapter_order'):
@@ -674,7 +742,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
     post_lookup_field = 'data_locator'
     post_lookup_meta_group = 'open_edx_meta'
 
-    def publish_obj(self, obj, previous_obj=None):
+    def publish_obj(self, obj, previous_obj=None, ignore_tag_creation=True):
         """
         Publish a CourseRun to the marketing site.
 
@@ -691,7 +759,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         if previous_obj and obj.status != previous_obj.status or previous_obj == None:
             logger.info('Publishing course run [%s] to marketing site (Wordpress) ...', obj.key)
 
-            post_data = self.serialize_obj(obj)
+            post_data = self.serialize_obj(obj, ignore_tag_creation)
 
             try:
                 post_id = self.post_id(obj)
@@ -761,7 +829,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
     #         **data,
     #     }
 
-    def serialize_obj(self, obj):
+    def serialize_obj(self, obj, ignore_tag_creation=True):
         """
         Serialize the CourseRun instance to be published to Wordpress as custom post type 'course'.
 
@@ -788,6 +856,26 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         #     # Create media content on Wordpress if it doesn't exist.
         #     obj.wordpress_media_id = data['fields']['hero'] = self.create_media(self.serialize_media(obj))
         #     obj.save()
+
+        if not ignore_tag_creation:
+            tags = []
+            for tag in obj.tags.names():
+                tag_data = {
+                    "description" : "",
+                    "name" : tag,
+                    "slug" : slugify(tag),
+                    "meta" : []
+                }
+
+                try:
+                    wp_tag = self.create_tag(tag_data)
+                except (TagCreateError) as error:
+                    logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                    wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+                if isinstance(wp_tag, int):
+                    tags.append(wp_tag)
+            data['edx-tag'] = tags
 
         chapters = []
         for chapter in obj.chapters.all().order_by('course_order'):
