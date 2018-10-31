@@ -713,14 +713,15 @@ class CourseRun(TimeStampedModel):
 
     def _update_tags(self):
         """ Loops through all referenced Chapters and updates the tags to be relevant for this CourseRun. """
-        tags = []
-        for chapter in self.chapters.all():
-            if chapter.tags:
-                for tag in chapter.tags.names():
-                    if tag not in tags:
-                        tags.append(tag)
+        if self.id and self.chapters:
+            tags = []
+            for chapter in self.chapters.all():
+                if chapter.tags:
+                    for tag in chapter.tags.names():
+                        if tag not in tags:
+                            tags.append(tag)
 
-        self.tags.set(*tags, clear=True)
+            self.tags.set(*tags, clear=True)
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
@@ -913,14 +914,15 @@ class Chapter(TimeStampedModel):
 
     def _update_tags(self):
         """ Loops through all referenced Sequentials and updates the tags to be relevant for this Chapter. """
-        tags = []
-        for sequential in self.sequentials.all():
-            if sequential.tags:
-                for tag in sequential.tags.names():
-                    if tag not in tags:
-                        tags.append(tag)
+        if self.id and self.sequentials:
+            tags = []
+            for sequential in self.sequentials.all():
+                if sequential.tags:
+                    for tag in sequential.tags.names():
+                        if tag not in tags:
+                            tags.append(tag)
 
-        self.tags.set(*tags, clear=True)
+            self.tags.set(*tags, clear=True)
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
