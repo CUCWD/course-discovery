@@ -908,6 +908,8 @@ class CourseRun(TimeStampedModel):
     def save(self, *args, **kwargs):  # pylint: disable=arguments-differ
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_published = kwargs.pop('is_published', False)
+        ignore_tag_creation = kwargs.pop('ignore_tag_creation', True)
+
         is_publishable = (
             self.course.partner.has_marketing_site and
             waffle.switch_is_active('publish_course_runs_to_marketing_site') and
@@ -931,7 +933,7 @@ class CourseRun(TimeStampedModel):
 
             with transaction.atomic():
                 super(CourseRun, self).save(*args, **kwargs)
-                publisher.publish_obj(self, previous_obj=previous_obj)
+                publisher.publish_obj(self, previous_obj=previous_obj, ignore_tag_creation=ignore_tag_creation)
 
         else:
             logger.info('Course run [%s] is not publishable.', self.key)
@@ -1140,6 +1142,9 @@ class Chapter(TimeStampedModel):
         #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_published = kwargs.pop('is_published', False)
+        is_child_update = kwargs.pop('is_child_update', False)
+        ignore_tag_creation = kwargs.pop('ignore_tag_creation', True)
+
         is_publishable = (
             self.course_run.course.partner.has_marketing_site and
             waffle.switch_is_active('publish_course_runs_to_marketing_site') and
@@ -1158,7 +1163,7 @@ class Chapter(TimeStampedModel):
 
             with transaction.atomic():
                 super(Chapter, self).save(*args, **kwargs)
-                publisher.publish_obj(self, previous_obj=previous_obj)
+                publisher.publish_obj(self, previous_obj=previous_obj, ignore_tag_creation=ignore_tag_creation)
 
         else:
             if is_published:
@@ -1166,18 +1171,19 @@ class Chapter(TimeStampedModel):
 
             super(Chapter, self).save(*args, **kwargs)
 
-            # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
+        # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
         # at the CourseRun level with correct Chapter includes.
-        for related_courserun in self.course_runs.all():
-            if related_courserun:
-                logger.info(
-                    "Saving related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
-                        related_courserun.title_override, related_courserun.key, self.title, self.location
+        if is_child_update:
+            for related_courserun in self.course_runs.all():
+                if related_courserun:
+                    logger.info(
+                        "Saving related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
+                            related_courserun.title_override, related_courserun.key, self.title, self.location
+                        )
                     )
-                )
 
-                related_courserun.status = CourseRunStatus.Unpublished
-                related_courserun.save() # suppress_publication=True)
+                    related_courserun.status = CourseRunStatus.Unpublished
+                    related_courserun.save(ignore_tag_creation=ignore_tag_creation) # suppress_publication=True)
 
 
     def _delete_marketing(self):
@@ -1282,6 +1288,9 @@ class Sequential(TimeStampedModel):
     def save(self, *args, **kwargs):
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_published = kwargs.pop('is_published', False)
+        is_child_update = kwargs.pop('is_child_update', False)
+        ignore_tag_creation = kwargs.pop('ignore_tag_creation', True)
+
         is_publishable = (
             self.course_run.course.partner.has_marketing_site and
             waffle.switch_is_active('publish_course_runs_to_marketing_site') and
@@ -1297,7 +1306,7 @@ class Sequential(TimeStampedModel):
 
             with transaction.atomic():
                 super(Sequential, self).save(*args, **kwargs)
-                publisher.publish_obj(self, previous_obj=previous_obj)
+                publisher.publish_obj(self, previous_obj=previous_obj, ignore_tag_creation=ignore_tag_creation)
 
         else:
             if is_published:
@@ -1307,16 +1316,17 @@ class Sequential(TimeStampedModel):
 
         # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
         # at the Chapter level with correct Sequential includes.
-        for related_chapter in self.chapters.all():
-            if related_chapter:
-                logger.info(
-                    "Saving related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
-                        related_chapter.title, related_chapter.location, self.title, self.location
+        if is_child_update:
+            for related_chapter in self.chapters.all():
+                if related_chapter:
+                    logger.info(
+                        "Saving related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
+                            related_chapter.title, related_chapter.location, self.title, self.location
+                        )
                     )
-                )
 
-                related_chapter.status = ChapterStatus.Unpublished
-                related_chapter.save() # suppress_publication=True)
+                    related_chapter.status = ChapterStatus.Unpublished
+                    related_chapter.save(is_child_update=True, ignore_tag_creation=ignore_tag_creation) # suppress_publication=True)
 
     def _delete_marketing(self):
         publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
@@ -1370,8 +1380,9 @@ def m2m_tags_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
+    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, Sequential):
+    if isinstance(instance, Sequential) and not ignore_tag_creation:
 
         # Do something here.
         logger.info(
@@ -1381,7 +1392,7 @@ def m2m_tags_changed(sender, **kwargs):
         )
 
         instance.status = SequentialStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False)
+        instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=ignore_tag_creation)
 
 
 def m2m_sequentials_changed(sender, **kwargs):
@@ -1400,18 +1411,19 @@ def m2m_sequentials_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
+    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, Chapter):
+    if isinstance(instance, Chapter) and not ignore_tag_creation:
 
         # Do something here.
         logger.info(
-            "Sequentials are being saved for Chapter `{}` {}.".format(
+            "Tags are being saved for Chapter `{}` {}.".format(
                 instance.location, instance.title
             )
         )
 
         instance.status = ChapterStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False)
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
 
 
 def m2m_chapters_changed(sender, **kwargs):
@@ -1430,18 +1442,19 @@ def m2m_chapters_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
+    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, CourseRun):
+    if isinstance(instance, CourseRun) and not ignore_tag_creation:
 
         # Do something here.
         logger.info(
-            "Chapters are being saved for CourseRun `{}` {}.".format(
+            "Tags are being saved for CourseRun `{}` {}.".format(
                 instance.key, instance.title
             )
         )
 
         instance.status = CourseRunStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False)
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
 
 
 m2m_changed.connect(m2m_tags_changed, sender=Sequential.tags.through)
