@@ -534,7 +534,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        if previous_obj and obj.status != previous_obj.status or previous_obj == None:
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
             logger.info('Publishing lesson [%s] to marketing site (Wordpress) ...', obj.location)
 
             post_data = self.serialize_obj(obj, ignore_tag_creation)
@@ -643,7 +643,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        if previous_obj and obj.status != previous_obj.status or previous_obj == None:
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
             logger.info('Publishing module [%s] to marketing site (Wordpress) ...', obj.location)
 
             post_data = self.serialize_obj(obj, ignore_tag_creation)
@@ -756,7 +756,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
                 determine if publication is necessary. May not exist if the course run
                 is being saved for the first time.
         """
-        if previous_obj and obj.status != previous_obj.status or previous_obj == None:
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
             logger.info('Publishing course run [%s] to marketing site (Wordpress) ...', obj.key)
 
             post_data = self.serialize_obj(obj, ignore_tag_creation)
