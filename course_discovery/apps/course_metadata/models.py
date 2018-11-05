@@ -1366,7 +1366,35 @@ class Sequential(TimeStampedModel):
             super(Sequential, self).delete(using)
 
 
-def m2m_tags_changed(sender, **kwargs):
+class Objective(TimeStampedModel):
+    """ Objective model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    description = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_("Description specific for this objective."))
+
+    def __str__(self):
+        return '{description}'.format(description=self.description)
+
+    def save(self, *args, **kwargs):
+        super(Objective, self).save(*args, **kwargs)
+        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+        # at the Chapter level with correct Sequential includes.
+        for related_sequential in self.sequentials.all():
+            if related_sequential:
+                related_sequential.save()
+
+                logger.info(
+                    "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
+                        related_sequential.title, related_sequential.location, self.description
+                    )
+                )
+
+"""
+These m2m are called after a model.save() call has been performed. Need to make sure that these child relationships
+are also stored in the database and published out to the marketihg frontend after a model.save() call.
+"""
+def m2m_sequential_tags_changed(sender, **kwargs):
     """
     Update Sequential tags on the publisher after Sequential.save() has been called.
 
@@ -1459,34 +1487,9 @@ def m2m_chapters_changed(sender, **kwargs):
         instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
 
 
-m2m_changed.connect(m2m_tags_changed, sender=Sequential.tags.through)
+m2m_changed.connect(m2m_sequential_tags_changed, sender=Sequential.tags.through)
 m2m_changed.connect(m2m_sequentials_changed, sender=Chapter.sequentials.through)
 m2m_changed.connect(m2m_chapters_changed, sender=CourseRun.chapters.through)
-
-
-class Objective(TimeStampedModel):
-    """ Objective model. """
-    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
-    description = models.TextField(
-        default=None, null=True, blank=True,
-        help_text=_("Description specific for this objective."))
-
-    def __str__(self):
-        return '{description}'.format(description=self.description)
-
-    def save(self, *args, **kwargs):
-        super(Objective, self).save(*args, **kwargs)
-        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
-        # at the Chapter level with correct Sequential includes.
-        for related_sequential in self.sequentials.all():
-            if related_sequential:
-                related_sequential.save()
-
-                logger.info(
-                    "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
-                        related_sequential.title, related_sequential.location, self.description
-                    )
-                )
 
 
 class Endorsement(TimeStampedModel):
