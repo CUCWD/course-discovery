@@ -1165,7 +1165,66 @@ class Sequential(TimeStampedModel):
             super(Sequential, self).delete(using)
 
 
-def m2m_tags_changed(sender, **kwargs):
+class Objective(TimeStampedModel):
+    """ Objective model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    description = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_("Description specific for this objective."))
+
+    def __str__(self):
+        return '{description}'.format(description=self.description)
+
+    def save(self, *args, **kwargs):
+        super(Objective, self).save(*args, **kwargs)
+
+        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+        # at the Chapter level with correct Sequential includes.
+        for related_sequential in self.sequentials.all():
+            if related_sequential:
+                related_sequential.save()
+
+                logger.info(
+                    "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
+                        related_sequential.title, related_sequential.location, self.description
+                    )
+                )
+
+"""
+These m2m are called after a model.save() call has been performed. Need to make sure that these child relationships
+are also stored in the database and published out to the marketihg frontend after a model.save() call.
+"""
+def m2m_sequential_objectives_changed(sender, **kwargs):
+    """
+    Update Sequential objectives on the publisher after Sequential.save() has been called.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Sequential):
+
+        # Do something here.
+        logger.info(
+            "Objectives are being saved for Sequential `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = SequentialStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
+
+
+def m2m_sequential_tags_changed(sender, **kwargs):
     """
     Update Sequential tags on the publisher after Sequential.save() has been called.
 
@@ -1258,34 +1317,10 @@ def m2m_chapters_changed(sender, **kwargs):
         instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
 
 
-m2m_changed.connect(m2m_tags_changed, sender=Sequential.tags.through)
+m2m_changed.connect(m2m_sequential_objectives_changed, sender=Sequential.objectives.through)
+m2m_changed.connect(m2m_sequential_tags_changed, sender=Sequential.tags.through)
 m2m_changed.connect(m2m_sequentials_changed, sender=Chapter.sequentials.through)
 m2m_changed.connect(m2m_chapters_changed, sender=CourseRun.chapters.through)
-
-
-class Objective(TimeStampedModel):
-    """ Objective model. """
-    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
-    description = models.TextField(
-        default=None, null=True, blank=True,
-        help_text=_("Description specific for this objective."))
-
-    def __str__(self):
-        return '{description}'.format(description=self.description)
-
-    def save(self, *args, **kwargs):
-        super(Objective, self).save(*args, **kwargs)
-        # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
-        # at the Chapter level with correct Sequential includes.
-        for related_sequential in self.sequentials.all():
-            if related_sequential:
-                related_sequential.save()
-
-                logger.info(
-                    "Saved related Sequential `{}` {} since Objective `{}` was updated.".format(
-                        related_sequential.title, related_sequential.location, self.description
-                    )
-                )
 
 
 class Endorsement(TimeStampedModel):
