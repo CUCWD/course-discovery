@@ -903,6 +903,15 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
             }
         )
 
+        # These values are defined on the Course custom post type field (open_edx_meta > level_type) so the
+        # 'LevelType' model might not have same 'id' key value as what is defined in the marketing frontend so we need
+        # to compare against the values and use the defined select id used in marketing frontend field for assignment.
+        level_type_switcher = {
+            "Beginner" : 1,
+            "Intermediate" : 2,
+            "Advanced" : 3
+        }
+
         data['fields'][self.post_lookup_meta_group].update(
             {
                 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
@@ -914,6 +923,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
                 'course_end_date' : str(obj.end) if obj.end else '',
                 'enrollment_start_date' : str(obj.enrollment_start) if obj.enrollment_start else '',
                 'enrollment_end_date' : str(obj.enrollment_end) if obj.enrollment_end else '',
+                'level_type' : level_type_switcher.get(obj.level_type.name, '') if obj.level_type else '',
                 'language' : obj.language.code if obj.language else '',
                 'transcript_languages' : [ language.code if language else '' for language in obj.transcript_languages.all() ],
             })
