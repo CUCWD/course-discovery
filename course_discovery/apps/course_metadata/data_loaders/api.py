@@ -514,7 +514,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'start': self.parse_date(body['start']),
             'card_image_url': body['media'].get('image', {}).get('raw'),
             'title_override': body['name'],
-            'short_description_override': body['short_description'],
+            'short_description_override': ( body['short_description'][:250] + ' ...' if len(body['short_description']) > 255 else body['short_description'] ),
             'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
             'video': self.get_courserun_video(body),
             'status': CourseRunStatus.Unpublished,
