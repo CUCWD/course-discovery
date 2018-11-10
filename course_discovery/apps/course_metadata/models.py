@@ -13,6 +13,7 @@ from django.db import models, transaction
 from django.db.models.query_utils import Q
 from django.db.models.signals import m2m_changed
 from django.utils.functional import cached_property
+from django.utils.text import slugify
 from django.utils.translation import ugettext_lazy as _
 from django_extensions.db.fields import AutoSlugField
 from django_extensions.db.models import TimeStampedModel
@@ -24,7 +25,7 @@ from stdimage.utils import UploadToAutoSlug
 from taggit_autosuggest.managers import TaggableManager
 
 from course_discovery.apps.core.models import Currency, Partner
-from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, \
+from course_discovery.apps.course_metadata.choices import SimulationStatus, SimulationMode, SequentialStatus, ChapterStatus, \
     CourseRunPacing, CourseRunStatus, ProgramStatus, ReportingType
 from course_discovery.apps.course_metadata.publishers import (
     CourseRunMarketingSitePublisher,
@@ -1189,6 +1190,74 @@ class Objective(TimeStampedModel):
                         related_sequential.title, related_sequential.location, self.description
                     )
                 )
+
+
+class Simulation(TimeStampedModel):
+    """ Simulation model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+
+    location = models.CharField(max_length=255, unique=True)
+
+    status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=SimulationStatus.choices,
+                              validators=[SimulationStatus.validator])
+    min_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this simulation.'))
+
+    max_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this simulation.'))
+
+    title = models.CharField(max_length=255, default=None, null=True, blank=True)
+
+    full_description_override = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_(
+            "Full description specific for this simulation. Leave this value blank to default to "
+            "the parent course's full_description attribute."))
+
+    tags = TaggableManager(
+        blank=True,
+        help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
+    )
+
+    objectives = SortedManyToManyField('Objective', related_name='simulation_objectives')
+    sequentials = SortedManyToManyField('Sequential', related_name='simulation_sequentials')
+
+    simulation_mode = models.CharField(max_length=255, db_index=True, null=True, blank=True,
+                                   choices=SimulationMode.choices, validators=[SimulationMode.validator])
+
+    slug = AutoSlugField(populate_from='title')
+    mobile_available = models.BooleanField(default=False)
+    hidden = models.BooleanField(default=False)
+
+    def __str__(self):
+        return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    @property
+    def full_description(self):
+        return self.full_description_override
+
+    @full_description.setter
+    def full_description(self, value):
+        # Treat empty strings as NULL
+        value = value or None
+        self.full_description_override = value
+
+    # Set location for this simulation. At this time we don't pass back a block location from the LMS so we're
+    # defining it here. This location value will be unique allow it to only display one time in the database
+    # as well as the marketing frontend.
+    def _set_location(self):
+        self.location = '%s@%s' % ('simulation', slugify(self.title),)
+
+    def save(self, *args, **kwargs):
+        self._set_location()
+
+        super(Simulation, self).save(*args, **kwargs)
+
 
 """
 These m2m are called after a model.save() call has been performed. Need to make sure that these child relationships
