@@ -123,7 +123,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
                 course_run.hidden = True
                 course_run.save()
 
-            if course_run.key not in non_hidden_courses:
+            if course_run.key not in hidden_courses and course_run.key not in non_hidden_courses:
                 logger.info('Deleting [%s] course from discovery store and the marketing frontend since it was not '
                             'included in results from the LMS Course REST API indicating that it has been removed from '
                             'the platform altogether.', course_run.key)
