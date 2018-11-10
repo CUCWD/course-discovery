@@ -85,27 +85,56 @@ class CoursesApiDataLoader(AbstractDataLoader):
         response = self._make_request_courses(initial_page)
         count = response['pagination']['count']
         pages = response['pagination']['num_pages']
-        self._process_response_courses(response)
+        rest_result_courses = []
+        self._process_response_courses(response, rest_result_courses)
 
         pagerange = range(initial_page + 1, pages + 1)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:  # pragma: no cover
             if self.is_threadsafe:
                 for page in pagerange:
-                    executor.submit(self._load_data_courses, page)
+                    executor.submit(self._load_data_courses, page, rest_result_courses)
             else:
                 for future in [executor.submit(self._make_request_courses, page) for page in pagerange]:
                     response = future.result()
-                    self._process_response_courses(response)
+                    self._process_response_courses(response, rest_result_courses)
 
         logger.info('Retrieved %d course runs from %s.', count, self.partner.courses_api_url)
 
+        """
+        The LMS Course REST API can show a limited subset of the existing courses should the 
+        `lms_catalog_service_user` account not have `Staff` enabled.
+        
+        Hide any courses in the Course REST API that have hidden flag enabled. This is because `Course Visibility`
+        is set to not `both` but rather `about` or `none` settings. We want to propagate this up to the
+        marketing frontend so we're not passing a `suppress_publication` to the course.save() call.
+        
+        Delete courses that exist in `course-discovery` database but are not being passed back from the 
+        LMS Course REST API. This would indicate that a course has been removed from the
+        platform. At this time we're just hiding courses. Should we need or want to 
+        """
+        hidden_courses = [course.get('course_id') for course in rest_result_courses if course.get('hidden') is True ]
+        non_hidden_courses = [course.get('course_id') for course in rest_result_courses if course.get('hidden') is False ]
+        for course_run in CourseRun.objects.all():
+
+            if course_run.key in hidden_courses:
+                logger.info('Hiding [%s] course in discovery store and marketing frontend since the results from the '
+                            'LMS Course REST API indicate hidden for the catalog course.', course_run.key)
+                course_run.hidden = True
+                course_run.save()
+
+            if course_run.key not in non_hidden_courses:
+                logger.info('Deleting [%s] course from discovery store and the marketing frontend since it was not '
+                            'included in results from the LMS Course REST API indicating that it has been removed from '
+                            'the platform altogether.', course_run.key)
+                course_run.delete()
+
         self.delete_orphans()
 
-    def _load_data_courses(self, page):  # pragma: no cover
+    def _load_data_courses(self, page, rest_result_courses=None):  # pragma: no cover
         """Make a request for the given page and process the response."""
         response = self._make_request_courses(page)
-        self._process_response_courses(response)
+        self._process_response_courses(response, rest_result_courses)
 
     def _make_request_courses(self, page):
         return self.api_client.courses().get(page=page, page_size=self.PAGE_SIZE, username=self.username)
@@ -135,25 +164,10 @@ class CoursesApiDataLoader(AbstractDataLoader):
             requested_fields=requested_fields
         )
 
-    def _process_response_courses(self, response):
+    def _process_response_courses(self, response, rest_result_courses=None):
         """ Process Courses """
         results = response['results']
         logger.info('Retrieved %d course runs...', len(results))
-
-        """
-        Deleting old Courses from `course-discovery` store and/or marketing frontend that were 
-        removed from the CMS before adding new ones. The LMS Course REST API can show a limited subset of the existing 
-        courses should the `lms_catalog_service_user` account not have `Staff` enabled.
-        """
-        # Hide courses that are not in the response. This is an indicator that the course has been removed from the CMS.
-        course_response_locations = []
-        for body in results:
-            course_response_locations.append(body['id'])
-
-        for course in CourseRun.objects.all():
-
-            if course.key not in course_response_locations:
-                course.delete()
 
         """
         Add changes for new Courses or update exist ones to `course-discovery` store and/or publish to 
@@ -170,6 +184,10 @@ class CoursesApiDataLoader(AbstractDataLoader):
             LMS Course/Block REST API have access to Staff mode it would allow them to retrieve a payload of all
             courses information regardless of this advanced setting being set to show on the catalog (eg. `both`).
             """
+            rest_result_courses.append({
+                'course_id': body['id'],
+                'hidden': body['hidden']
+            })
             if body['hidden']:
                 continue
 
