@@ -1571,7 +1571,7 @@ def m2m_simulation_tags_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_add' else True
+    ignore_tag_creation = False if action == 'post_save' or action == 'post_add' else True
 
     if isinstance(instance, Simulation) and not ignore_tag_creation:
 
@@ -1722,7 +1722,7 @@ def m2m_sequential_tags_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_save' else True
+    ignore_tag_creation = False if action == 'post_save' or action == 'post_add' else True
 
     if isinstance(instance, Sequential) and not ignore_tag_creation:
 
@@ -1753,9 +1753,8 @@ def m2m_chapter_sequentials_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, Chapter) and not ignore_tag_creation:
+    if isinstance(instance, Chapter):
 
         # Do something here.
         logger.info(
@@ -1765,7 +1764,7 @@ def m2m_chapter_sequentials_changed(sender, **kwargs):
         )
 
         instance.status = ChapterStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True)
 
 
 def m2m_courserun_chapters_changed(sender, **kwargs):
@@ -1784,9 +1783,8 @@ def m2m_courserun_chapters_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, CourseRun) and not ignore_tag_creation:
+    if isinstance(instance, CourseRun):
 
         # Do something here.
         logger.info(
@@ -1796,7 +1794,7 @@ def m2m_courserun_chapters_changed(sender, **kwargs):
         )
 
         instance.status = CourseRunStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True)
 
 
 m2m_changed.connect(m2m_simulation_tags_changed, sender=Simulation.tags.through)
