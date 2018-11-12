@@ -13,6 +13,7 @@ from django.db import models, transaction
 from django.db.models.query_utils import Q
 from django.db.models.signals import m2m_changed
 from django.utils.functional import cached_property
+from django.utils.text import slugify
 from django.utils.translation import ugettext_lazy as _
 from django_extensions.db.fields import AutoSlugField
 from django_extensions.db.models import TimeStampedModel
@@ -24,13 +25,14 @@ from stdimage.utils import UploadToAutoSlug
 from taggit_autosuggest.managers import TaggableManager
 
 from course_discovery.apps.core.models import Currency, Partner
-from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, \
+from course_discovery.apps.course_metadata.choices import SimulationStatus, SequentialStatus, ChapterStatus, \
     CourseRunPacing, CourseRunStatus, ProgramStatus, ReportingType
 from course_discovery.apps.course_metadata.publishers import (
     CourseRunMarketingSitePublisher,
     ProgramMarketingSitePublisher
 )
 from course_discovery.apps.course_metadata.publishers_wordpress import (
+    SimulationMarketingSiteWordpressPublisher,
     SequentialMarketingSiteWordpressPublisher,
     ChapterMarketingSiteWordpressPublisher,
     CourseRunMarketingSiteWordpressPublisher,
@@ -1053,7 +1055,8 @@ class Sequential(TimeStampedModel):
         help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
     )
 
-    objectives = SortedManyToManyField('Objective', related_name='sequentials')
+    objectives = SortedManyToManyField('Objective', related_name='sequential_objectives')
+    simulations = SortedManyToManyField('Simulation', related_name='sequential_simulations')
 
     """ 
     Todo: May want to consider adding in the additional fields provided by the Block REST API for this type.
@@ -1180,7 +1183,9 @@ class Objective(TimeStampedModel):
 
         # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
         # at the Chapter level with correct Sequential includes.
-        for related_sequential in self.sequentials.all():
+        # Todo: I'm not sure this ever gets executed because this is called only when we add a new Objective
+        # to a Sequential.
+        for related_sequential in self.sequential_objectives.all():
             if related_sequential:
                 related_sequential.save()
 
@@ -1190,10 +1195,305 @@ class Objective(TimeStampedModel):
                     )
                 )
 
+
+class SimulationMode(models.Model):
+    """ SimulationMode model. """
+    code = models.CharField(max_length=50, primary_key=True)
+    name = models.CharField(max_length=255)
+    full_description_override = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_("Full description specific for this simulation type."))
+
+    def __str__(self):
+        return '{code}: {name}'.format(code=self.code, name=self.name)
+
+    def save(self, *args, **kwargs):
+        super(SimulationMode, self).save(*args, **kwargs)
+
+
+class Simulation(TimeStampedModel):
+    """ Simulation model. """
+    uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    partner = models.ForeignKey(Partner, blank=True, null=True)
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+
+    location = models.CharField(max_length=255, unique=True)
+
+    status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=SimulationStatus.choices,
+                              validators=[SimulationStatus.validator])
+    min_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this simulation.'))
+
+    max_effort = models.DurationField(
+        null=True, blank=True,
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this simulation.'))
+
+    title = models.CharField(max_length=255, default=None, null=True, blank=True)
+
+    full_description_override = models.TextField(
+        default=None, null=True, blank=True,
+        help_text=_(
+            "Full description specific for this simulation. Leave this value blank to default to "
+            "the parent course's full_description attribute."))
+
+    tags = TaggableManager(
+        blank=True,
+        help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
+    )
+
+    objectives = SortedManyToManyField('Objective', related_name='simulation_objectives')
+    sequentials = SortedManyToManyField('Sequential', related_name='simulation_sequentials')
+
+    simulation_modes = models.ManyToManyField(SimulationMode, blank=True, related_name='simulation_modes')
+
+    slug = AutoSlugField(populate_from='title')
+    mobile_available = models.BooleanField(default=False)
+    hidden = models.BooleanField(default=False)
+
+    def __str__(self):
+        return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    @property
+    def full_description(self):
+        return self.full_description_override
+
+    @full_description.setter
+    def full_description(self, value):
+        # Treat empty strings as NULL
+        value = value or None
+        self.full_description_override = value
+
+    # Set location for this simulation. At this time we don't pass back a block location from the LMS so we're
+    # defining it here. This location value will be unique allow it to only display one time in the database
+    # as well as the marketing frontend.
+    def _set_location(self):
+        if not self.location:
+            self.location = '%s@%s' % ('simulation', slugify(self.title),)
+
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": None,
+            "wordpress": SimulationMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def save(self, *args, **kwargs):
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_published = kwargs.pop('is_published', False)
+        is_child_update = kwargs.pop('is_child_update', False)
+        ignore_tag_creation = kwargs.pop('ignore_tag_creation', True)
+
+        is_publishable = (
+                self.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+                # Pop to clean the kwargs for the base class save call below
+                not suppress_publication and
+                not is_published
+        )
+
+        self._set_location()
+
+        if is_publishable:
+
+            publisher = self._locate_publisher(self.partner)
+            previous_obj = Simulation.objects.get(id=self.id) if self.id else None
+
+            with transaction.atomic():
+                super(Simulation, self).save(*args, **kwargs)
+                publisher.publish_obj(self, previous_obj=previous_obj, ignore_tag_creation=ignore_tag_creation)
+
+        else:
+            if is_published:
+                self.status = SimulationStatus.Published
+
+            super(Simulation, self).save(*args, **kwargs)
+
+        # Update related Sequential instances that include this Simulation, so that, the marketing frontend gets updated
+        # at the Sequential level with correct Simulation includes.
+        if is_child_update:
+            for related_sequential in self.sequential_simulations.all():
+                if related_sequential:
+                    logger.info(
+                        "Saving related Sequential `{}` {} since Simulation `{}` {} was updated.".format(
+                            related_sequential.title, related_sequential.location, self.title, self.location
+                        )
+                    )
+
+                    related_sequential.status = SequentialStatus.Unpublished
+                    related_sequential.save(is_child_update=False, ignore_tag_creation=ignore_tag_creation)  # suppress_publication=True)
+
+    def _delete_marketing(self):
+        publisher = self._locate_publisher(self.partner)  # SimulationMarketingSitePublisher(self.partner)
+        publisher.delete_obj(self)
+
+    def delete(self, using=None):
+
+        is_deletable = (
+                self.partner.has_marketing_site and
+                waffle.switch_is_active('publish_course_runs_to_marketing_site') #and
+                # Pop to clean the kwargs for the base class save call below
+                # not suppress_publication
+        )
+
+        if is_deletable:
+
+            with transaction.atomic():
+                # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
+                # at the Chapter level with correct Sequential includes. Here we are removing the sequential.
+                for related_sequential in self.sequential_simulations.all():
+                    if related_sequential:
+                        related_sequential.simulations.remove(self)
+                    # related_chapter.save()
+                    #
+                    # logger.info(
+                    #     "Saved related Chapter `{}` {} since Sequential `{}` {} was deleted.".format(
+                    #         related_chapter.title, related_chapter.location, self.title, self.location
+                    #     )
+                    # )
+
+                transaction.on_commit(self._delete_marketing)
+
+                super(Simulation, self).delete(using)
+        else:
+            super(Simulation, self).delete(using)
+
+
 """
 These m2m are called after a model.save() call has been performed. Need to make sure that these child relationships
 are also stored in the database and published out to the marketihg frontend after a model.save() call.
 """
+def m2m_simulation_tags_changed(sender, **kwargs):
+    """
+    Update Simulation tags on the publisher after Simulation.save() has been called.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+    ignore_tag_creation = False if action == 'post_save' or action == 'post_add' else True
+
+    if isinstance(instance, Simulation) and not ignore_tag_creation:
+
+        # Do something here.
+        logger.info(
+            "Tags are being saved for Simulation `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = SimulationStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation) # is_child_update=True,
+
+
+def m2m_simulation_objectives_changed(sender, **kwargs):
+    """
+    Update Simulation objectives on the publisher after Simulation.save() has been called.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Simulation):
+
+        # Do something here.
+        logger.info(
+            "Objectives are being saved for Simulation `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = SimulationStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True) #is_child_update=True,
+
+
+def m2m_simulation_sequentials_changed(sender, **kwargs):
+    """
+    Update Simulation sequentials on the publisher when reference has changed for Sequentials following a Simulation.save() complete.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Simulation):
+
+        # Do something here.
+        logger.info(
+            "Sequentials are being saved for Simulation `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = SimulationStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
+
+
+def m2m_simulation_modes_changed(sender, **kwargs):
+    """
+    Update Simulation modes on the publisher when reference has changed for SimulationMode following a Simulation.save() complete.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Simulation):
+
+        # Do something here.
+        logger.info(
+            "Simulation modes are being saved for Simulation `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        instance.status = SimulationStatus.Unpublished
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True)
+
+
 def m2m_sequential_objectives_changed(sender, **kwargs):
     """
     Update Sequential objectives on the publisher after Sequential.save() has been called.
@@ -1224,6 +1524,36 @@ def m2m_sequential_objectives_changed(sender, **kwargs):
         instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
 
 
+def m2m_sequential_simulations_changed(sender, **kwargs):
+    """
+    Update Sequential simulations on the publisher after Sequential.save() has been called.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Sequential):
+
+        # Do something here.
+        logger.info(
+            "Simulations are being saved for Sequential `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        # instance.status = SequentialStatus.Unpublished
+        # instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
+
+
 def m2m_sequential_tags_changed(sender, **kwargs):
     """
     Update Sequential tags on the publisher after Sequential.save() has been called.
@@ -1240,7 +1570,7 @@ def m2m_sequential_tags_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_save' else True
+    ignore_tag_creation = False if action == 'post_save' or action == 'post_add' else True
 
     if isinstance(instance, Sequential) and not ignore_tag_creation:
 
@@ -1255,9 +1585,9 @@ def m2m_sequential_tags_changed(sender, **kwargs):
         instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=ignore_tag_creation)
 
 
-def m2m_sequentials_changed(sender, **kwargs):
+def m2m_chapter_sequentials_changed(sender, **kwargs):
     """
-    Update Chapter tags on the publisher when reference has changed for Sequentials following a Chapter.save() complete.
+    Update Chapter sequentials on the publisher when reference has changed for Sequentials following a Chapter.save() complete.
 
     m2m_changed event gets called after the model.save() is complete.
     https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
@@ -1271,24 +1601,23 @@ def m2m_sequentials_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, Chapter) and not ignore_tag_creation:
+    if isinstance(instance, Chapter):
 
         # Do something here.
         logger.info(
-            "Tags are being saved for Chapter `{}` {}.".format(
+            "Sequentials are being saved for Chapter `{}` {}.".format(
                 instance.location, instance.title
             )
         )
 
         instance.status = ChapterStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True)
 
 
-def m2m_chapters_changed(sender, **kwargs):
+def m2m_courserun_chapters_changed(sender, **kwargs):
     """
-    Update CourseRun tags on the publisher when reference has changed for Chapters following a CourseRun.save() complete.
+    Update CourseRun chapters on the publisher when reference has changed for Chapters following a CourseRun.save() complete.
 
     m2m_changed event gets called after the model.save() is complete.
     https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
@@ -1302,25 +1631,29 @@ def m2m_chapters_changed(sender, **kwargs):
             return
 
     instance = kwargs.get('instance')
-    ignore_tag_creation = False if action == 'post_save' else True
 
-    if isinstance(instance, CourseRun) and not ignore_tag_creation:
+    if isinstance(instance, CourseRun):
 
         # Do something here.
         logger.info(
-            "Tags are being saved for CourseRun `{}` {}.".format(
+            "Chapters are being saved for CourseRun `{}` {}.".format(
                 instance.key, instance.title
             )
         )
 
         instance.status = CourseRunStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=ignore_tag_creation)
+        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True)
 
 
+m2m_changed.connect(m2m_simulation_tags_changed, sender=Simulation.tags.through)
+m2m_changed.connect(m2m_simulation_objectives_changed, sender=Simulation.objectives.through)
+m2m_changed.connect(m2m_simulation_sequentials_changed, sender=Simulation.sequentials.through)
+m2m_changed.connect(m2m_simulation_modes_changed, sender=Simulation.simulation_modes.through)
 m2m_changed.connect(m2m_sequential_objectives_changed, sender=Sequential.objectives.through)
+m2m_changed.connect(m2m_sequential_simulations_changed, sender=Sequential.simulations.through);
 m2m_changed.connect(m2m_sequential_tags_changed, sender=Sequential.tags.through)
-m2m_changed.connect(m2m_sequentials_changed, sender=Chapter.sequentials.through)
-m2m_changed.connect(m2m_chapters_changed, sender=CourseRun.chapters.through)
+m2m_changed.connect(m2m_chapter_sequentials_changed, sender=Chapter.sequentials.through)
+m2m_changed.connect(m2m_courserun_chapters_changed, sender=CourseRun.chapters.through)
 
 
 class Endorsement(TimeStampedModel):
