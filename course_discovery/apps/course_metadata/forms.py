@@ -173,12 +173,20 @@ class SequentialAdminForm(forms.ModelForm):
                     'class': 'sortable-select',
                 },
             ),
+            'simulations': autocomplete.ModelSelect2Multiple(
+                url='admin_metadata:simulation-autocomplete',
+                attrs={
+                    'data-minimum-input-length': 3,
+                    'class': 'sortable-select',
+                },
+            ),
         }
 
     def __init__(self, *args, **kwargs):
         super(SequentialAdminForm, self).__init__(*args, **kwargs)
         self.fields['slug'].required = True
         self.fields['objectives'].required = False
+        self.fields['simulations'].required = False
 
 
 class ObjectiveAdminForm(forms.ModelForm):

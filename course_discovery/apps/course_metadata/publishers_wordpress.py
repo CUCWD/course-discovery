@@ -719,6 +719,22 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
             objectives.append({ "objective": objective.description })
         data['fields']['objectives'] = objectives
 
+
+        simulations = []
+        for simulation in obj.simulations.all().order_by('title'):
+            try:
+                simulation_post_id = self.post_id(simulation)
+
+                if not simulation.hidden:
+                    simulations.append(simulation_post_id)
+            except (PostLookupError) as error:
+                logger.info('Simulation post [%s] on marketing site (Wordpress) does not exist so cannot assign '
+                            'to Sequential `[%s]` ...', simulation.location, obj.title)
+                continue
+
+        data['fields']['lesson_simulations'] = simulations
+
+
         data['fields'].setdefault('effort', {}).update(
             {
                 'estimated_effort': strfdelta(obj.min_effort, '%H:%M:%S'),
