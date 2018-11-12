@@ -5,7 +5,7 @@ from django.forms.utils import ErrorList
 from django.utils.translation import ugettext_lazy as _
 
 from course_discovery.apps.course_metadata.choices import ProgramStatus
-from course_discovery.apps.course_metadata.models import Course, CourseRun, Chapter, Sequential, Objective, Program
+from course_discovery.apps.course_metadata.models import Course, CourseRun, Chapter, Sequential, Objective, Simulation, Program
 
 
 def filter_choices_to_render_with_order_preserved(self, selected_choices):
@@ -173,12 +173,20 @@ class SequentialAdminForm(forms.ModelForm):
                     'class': 'sortable-select',
                 },
             ),
+            'simulations': autocomplete.ModelSelect2Multiple(
+                url='admin_metadata:simulation-autocomplete',
+                attrs={
+                    'data-minimum-input-length': 3,
+                    'class': 'sortable-select',
+                },
+            ),
         }
 
     def __init__(self, *args, **kwargs):
         super(SequentialAdminForm, self).__init__(*args, **kwargs)
         self.fields['slug'].required = True
         self.fields['objectives'].required = False
+        self.fields['simulations'].required = False
 
 
 class ObjectiveAdminForm(forms.ModelForm):
@@ -199,3 +207,36 @@ class ObjectiveAdminForm(forms.ModelForm):
             ))
 
         return self.cleaned_data
+
+
+class SimulationAdminForm(forms.ModelForm):
+    class Meta:
+        model = Simulation
+        fields = '__all__'
+
+        # Monkey patch filter_choices_to_render with our own definition which preserves ordering.
+        autocomplete.ModelSelect2Multiple.filter_choices_to_render = filter_choices_to_render_with_order_preserved
+
+        widgets = {
+            'objectives': autocomplete.ModelSelect2Multiple(
+                url='admin_metadata:objective-autocomplete',
+                attrs={
+                    'data-minimum-input-length': 3,
+                    'class': 'sortable-select',
+                },
+            ),
+            'sequentials': autocomplete.ModelSelect2Multiple(
+                url='admin_metadata:sequential-autocomplete',
+                attrs={
+                    'data-minimum-input-length': 3,
+                    'class': 'sortable-select',
+                },
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(SimulationAdminForm, self).__init__(*args, **kwargs)
+        self.fields['partner'].required = True
+        self.fields['objectives'].required = False
+        self.fields['sequentials'].required = False
+

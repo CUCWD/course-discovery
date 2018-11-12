@@ -8,7 +8,8 @@ from course_discovery.apps.course_metadata.exceptions import (
     MarketingSiteAPIClientException, MarketingSitePublisherException
 )
 from course_discovery.apps.course_metadata.forms import (
-    CourseAdminForm, CourseRunAdminForm, ChapterAdminForm, SequentialAdminForm, ObjectiveAdminForm, ProgramAdminForm
+    CourseAdminForm, CourseRunAdminForm, ChapterAdminForm, SequentialAdminForm, ObjectiveAdminForm, SimulationAdminForm,
+    ProgramAdminForm
 )
 from course_discovery.apps.course_metadata.models import *  # pylint: disable=wildcard-import
 
@@ -208,7 +209,7 @@ class SequentialAdmin(admin.ModelAdmin):
 
     # ordering the field display on admin page.
     fields = (
-        'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
+        'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'simulations', 'min_effort', 'max_effort',
         'chapter_order', 'slug', 'hidden', 'tags', 'wordpress_post_id', 'uuid'
     )
 
@@ -265,6 +266,64 @@ class ObjectiveAdmin(admin.ModelAdmin):
     fields = (
         'uuid', 'description'
     )
+
+
+@admin.register(SimulationMode)
+class SimulationMode(admin.ModelAdmin):
+    list_display = ('code', 'name', 'full_description_override')
+    ordering = ('code',)
+    search_fields = ('name', 'full_description_override')
+
+
+@admin.register(Simulation)
+class SimulationAdmin(admin.ModelAdmin):
+    form = SimulationAdminForm
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'location',)
+    list_filter = ('hidden', 'status', ('simulation_modes', admin.RelatedOnlyFieldListFilter,), 'title', 'partner',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('location', 'slug', 'uuid', 'wordpress_post_id',)
+    search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'partner', 'location', 'status', 'title', 'full_description_override', 'objectives', 'sequentials', 'simulation_modes',
+        'min_effort', 'max_effort', 'mobile_available', 'hidden', 'slug', 'tags', 'wordpress_post_id', 'uuid'
+    )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(SimulationAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+    save_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting simulation [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='simulation')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            # obj.status = SimulationStatus.Unpublished
+            obj.save(suppress_publication=True) #, is_child_update=True
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing simulation [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='simulation')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Program)

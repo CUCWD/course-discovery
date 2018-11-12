@@ -73,6 +73,7 @@ class BaseMarketingSiteWordpressPublisher:
         self.post_course_api_base = '{base}/course'.format(base=self.rest_api_base) #urljoin(self.rest_api_base, 'course')
         self.post_module_api_base = '{base}/module'.format(base=self.rest_api_base)
         self.post_lesson_api_base = '{base}/lesson'.format(base=self.rest_api_base)
+        self.post_simulation_api_base = '{base}/simulation'.format(base=self.rest_api_base)
         # self.node_api_base = urljoin(self.client.api_url, '/node.json')
         # self.alias_api_base = urljoin(self.client.api_url, '/admin/config/search/path')
         # self.alias_add_url = '{}/add'.format(self.alias_api_base)
@@ -82,7 +83,8 @@ class BaseMarketingSiteWordpressPublisher:
             "OrganizationMarketingSiteWordpressPublisher" : self.post_organization_api_base,
             "CourseRunMarketingSiteWordpressPublisher" : self.post_course_api_base,
             "ChapterMarketingSiteWordpressPublisher" : self.post_module_api_base,
-            "SequentialMarketingSiteWordpressPublisher" : self.post_lesson_api_base
+            "SequentialMarketingSiteWordpressPublisher" : self.post_lesson_api_base,
+            "SimulationMarketingSiteWordpressPublisher": self.post_simulation_api_base
         }
         self.post_base = switcher.get(self.__class__.__name__, None)
 
@@ -512,10 +514,133 @@ class BaseMarketingSiteWordpressPublisher:
     #             raise AliasCreateError
 
 
+class SimulationMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):
+    """
+    Utility for publishing course run data to a Wordpress marketing site.
+    """
+    unique_field = 'location'
+    post_lookup_field = 'data_locator'
+    post_lookup_meta_group = 'open_edx_meta'
+
+    def publish_obj(self, obj, previous_obj=None, ignore_tag_creation=True):
+        """
+        Publish a Simulation to the marketing site.
+
+        Publication only occurs if the Simulation's status has changed.
+
+        Arguments:
+            obj (Simulation): Simulation instance to be published.
+
+        Keyword Arguments:
+            previous_obj (Simulation): Previous state of the simulation. Inspected to
+                determine if publication is necessary. May not exist if the Sequential
+                is being saved for the first time.
+        """
+        if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
+            logger.info('Publishing simulation [%s] to marketing site (Wordpress) ...', obj.location)
+
+            post_data = self.serialize_obj(obj, ignore_tag_creation)
+
+            try:
+                post_id = self.post_id(obj)
+                self.edit_post(post_id, post_data)
+
+            except (PostLookupError) as error:
+                post_id = self.create_post(post_data)
+                if post_id:
+                    logger.info('Created simulation post [%d] on marketing site (Wordpress) ...', post_id)
+                    obj.wordpress_post_id = post_id
+
+            obj.save(suppress_publication=True, is_published=True)
+        else:
+            logger.info('Not publishing simulation [%s] to marketing site (Wordpress) since status [%s]'
+                        ' of previous obj has not changed ...', obj.location, previous_obj.status if previous_obj else "unavailable")
+
+
+    def serialize_obj(self, obj, ignore_tag_creation=True):
+        """
+        Serialize the Simulation instance to be published to Wordpress as custom post type 'simulation'.
+
+        Arguments:
+            obj (Simulation): Simulation instance to be published.
+
+        Returns:
+            dict: Data to PUT (edit) / POST (create) to the Wordpress API (/course)
+        """
+        data = super().serialize_obj(obj)
+        data['title'] = obj.title
+        data['slug'] = obj.slug
+
+        if not ignore_tag_creation:
+            tags = []
+            for tag in obj.tags.names():
+                tag_data = {
+                    "description" : "",
+                    "name" : tag,
+                    "slug" : slugify(tag),
+                    "meta" : []
+                }
+
+                try:
+                    wp_tag = self.create_tag(tag_data)
+                except (TagCreateError) as error:
+                    logger.info('Could not create duplicate tag for [%s] on marketing site (Wordpress) ...', tag)
+                    wp_tag = json.loads(error.args[0].get('response_text')).get('data').get('term_id')
+
+                if isinstance(wp_tag, int):
+                    tags.append(wp_tag)
+            data['edx-tag'] = tags
+
+        objectives = []
+        for objective in obj.objectives.all():
+            objectives.append({ "objective": objective.description })
+        data['fields']['objectives'] = objectives
+
+        sequentials = []
+        for sequential in obj.sequentials.all().order_by('chapter_order'):
+            try:
+                sequential_post_id = self.post_id(sequential)
+
+                if not sequential.hidden:
+                    sequentials.append(sequential_post_id)
+            except (PostLookupError) as error:
+                logger.info('Sequential post [%s] on marketing site (Wordpress) does not exist so cannot assign '
+                            'to Simulation `[%s]` ...', sequential.location, obj.title)
+                continue
+
+        data['fields']['simulation_lessons'] = sequentials
+
+
+        data['fields'].setdefault('effort', {}).update(
+            {
+                'estimated_effort': strfdelta(obj.min_effort, '%H:%M:%S'),
+                'actual_effort': strfdelta(obj.max_effort, '%H:%M:%S')
+            }
+        )
+
+        # module_post_id = None
+        # for related_sequential in obj.sequentials.all():
+        #     if related_sequential and obj.course_run.key == related_chapter.course_run.key:
+        #         module_post_id = related_chapter.wordpress_post_id
+
+        data['fields']['content_overview'] = obj.full_description
+
+        data['fields'][self.post_lookup_meta_group].update(
+            {
+                'simulation_modes': [mode.code if mode else '' for mode in obj.simulation_modes.all()],
+                'mobile_available': obj.mobile_available,
+            }
+        )
+
+        return {
+            **data,
+        }
+
+
 class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):
     """
-        Utility for publishing course run data to a Wordpress marketing site.
-        """
+    Utility for publishing course run data to a Wordpress marketing site.
+    """
     unique_field = 'location'
     post_lookup_field = 'data_locator'
     post_lookup_meta_group = 'open_edx_meta'
@@ -531,7 +656,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
 
         Keyword Arguments:
             previous_obj (Sequential): Previous state of the sequential. Inspected to
-                determine if publication is necessary. May not exist if the course run
+                determine if publication is necessary. May not exist if the Sequential
                 is being saved for the first time.
         """
         if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
@@ -546,7 +671,7 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
             except (PostLookupError) as error:
                 post_id = self.create_post(post_data)
                 if post_id:
-                    logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                    logger.info('Created lesson post [%d] on marketing site (Wordpress) ...', post_id)
                     obj.wordpress_post_id = post_id
 
             obj.save(suppress_publication=True, is_published=True)
@@ -594,6 +719,22 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
             objectives.append({ "objective": objective.description })
         data['fields']['objectives'] = objectives
 
+
+        simulations = []
+        for simulation in obj.simulations.all().order_by('title'):
+            try:
+                simulation_post_id = self.post_id(simulation)
+
+                if not simulation.hidden:
+                    simulations.append(simulation_post_id)
+            except (PostLookupError) as error:
+                logger.info('Simulation post [%s] on marketing site (Wordpress) does not exist so cannot assign '
+                            'to Sequential `[%s]` ...', simulation.location, obj.title)
+                continue
+
+        data['fields']['lesson_simulations'] = simulations
+
+
         data['fields'].setdefault('effort', {}).update(
             {
                 'estimated_effort': strfdelta(obj.min_effort, '%H:%M:%S'),
@@ -623,8 +764,8 @@ class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublis
 
 class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):
     """
-        Utility for publishing course run data to a Wordpress marketing site.
-        """
+    Utility for publishing course run data to a Wordpress marketing site.
+    """
     unique_field = 'location'
     post_lookup_field = 'data_locator'
     post_lookup_meta_group = 'open_edx_meta'
@@ -640,7 +781,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
 
         Keyword Arguments:
             previous_obj (Chapter): Previous state of the chapter. Inspected to
-                determine if publication is necessary. May not exist if the course run
+                determine if publication is necessary. May not exist if the Chapter
                 is being saved for the first time.
         """
         if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
@@ -655,7 +796,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
             except (PostLookupError) as error:
                 post_id = self.create_post(post_data)
                 if post_id:
-                    logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                    logger.info('Created module post [%d] on marketing site (Wordpress) ...', post_id)
                     obj.wordpress_post_id = post_id
 
             obj.save(suppress_publication=True, is_published=True)
@@ -753,7 +894,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
 
         Keyword Arguments:
             previous_obj (CourseRun): Previous state of the course run. Inspected to
-                determine if publication is necessary. May not exist if the course run
+                determine if publication is necessary. May not exist if the CourseRun
                 is being saved for the first time.
         """
         if previous_obj and obj.status != previous_obj.status or previous_obj == None or not obj.wordpress_post_id:
@@ -768,7 +909,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
             except (PostLookupError) as error:
                 post_id = self.create_post(post_data)
                 if post_id:
-                    logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                    logger.info('Created course run post [%d] on marketing site (Wordpress) ...', post_id)
                     obj.wordpress_post_id = post_id
 
             obj.save(suppress_publication=True, is_published=True)
@@ -963,7 +1104,7 @@ class OrganizationMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPubl
 
         Keyword Arguments:
             previous_obj (Organization): Previous state of the organization. Inspected to
-                determine if publication is necessary. May not exist if the organization
+                determine if publication is necessary. May not exist if the Organization
                 is being saved for the first time.
         """
         logger.info('Publishing organization [%s] to marketing site (Wordpress) ...', obj.key)
