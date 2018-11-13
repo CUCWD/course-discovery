@@ -513,7 +513,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
         defaults.update({
             'start': self.parse_date(body['start']),
             'card_image_url': body['media'].get('image', {}).get('raw'),
-            'title_override': body['name'],
+            'title_override': body['name'].split(':')[-1].strip(),
             'short_description_override': ( body['short_description'][:250] + ' ...' if body['short_description'] and ( len(body['short_description']) > 255 ) else body['short_description'] ),
             'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
             'video': self.get_courserun_video(body),
@@ -529,7 +529,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
     def format_course_data(self, body):
         defaults = {
-            'title': body['name'],
+            'title': body['name'].split(':')[-1].strip(),
         }
 
         return defaults
