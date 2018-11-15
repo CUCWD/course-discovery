@@ -191,6 +191,15 @@ class CoursesApiDataLoader(AbstractDataLoader):
             if body['hidden']:
                 continue
 
+            """
+            Only process courses that are passed in with the `refresh_course_metadata.py --courses` flag.
+            """
+            if self.course_keys and (course_run_id not in self.course_keys):
+                logger.info('Not processing %s course run since it was not in the --courses flag ...', course_run_id)
+                continue
+
+            logger.info('Processing %s course run ...', course_run_id)
+
             try:
                 body = self.clean_strings(body)
                 course_run = self.get_course_run(body)
