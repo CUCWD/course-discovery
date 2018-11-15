@@ -62,6 +62,12 @@ class Command(BaseCommand):
             default=None,
             help='The short code for a specific partner to refresh.'
         )
+        parser.add_argument(
+            '--courses',
+            dest='courses',
+            nargs='+',
+            help=u'Update `course-discovery` and marketing frontend for the list of courses provided.',
+        )
 
     def handle(self, *args, **options):
         # We only want to invalidate the API response cache once data loading
@@ -99,6 +105,9 @@ class Command(BaseCommand):
                 raise
             username = jwt.decode(access_token, verify=False)['preferred_username']
             kwargs = {'username': username} if username else {}
+
+            course_keys = options['courses']
+            kwargs.update({'course_keys': course_keys}) if course_keys else {}
 
             # The Linux kernel implements copy-on-write when fork() is called to create a new
             # process. Pages that the parent and child processes share, such as the database
