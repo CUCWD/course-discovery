@@ -760,7 +760,14 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         data['fields']['short_description'] = obj.short_description
         data['fields']['content_overview'] = obj.full_description
 
-        #Todo: Need to include 'course_modules', 'average_length', 'effort'
+        #Todo: Need to include 'course_modules'
+
+        data['fields'].setdefault('effort', {}).update(
+            {
+                'estimated_effort': strfdelta(obj.min_effort, '%H:%M:%S'),
+                'actual_effort': strfdelta(obj.max_effort, '%H:%M:%S')
+            }
+        )
 
         data['fields'][self.post_lookup_meta_group].update(
             {
