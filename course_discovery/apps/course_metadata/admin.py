@@ -95,7 +95,7 @@ class CourseRunAdmin(admin.ModelAdmin):
     )
     ordering = ('key',)
     raw_id_fields = ('course',)
-    readonly_fields = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort',)
+    readonly_fields = ('uuid', 'wordpress_post_id', 'min_effort', 'max_effort',)
     search_fields = ('uuid', 'wordpress_post_id', 'key', 'title_override', 'course__title', 'slug',)
 
     # ordering the field display on admin page.
@@ -349,11 +349,39 @@ class OrganizationUserRoleInline(admin.TabularInline):
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ('uuid', 'key', 'name',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'key', 'name', 'slug',)
     inlines = [OrganizationUserRoleInline, ]
     list_filter = ('partner',)
-    readonly_fields = ('uuid',)
+    readonly_fields = ('uuid', 'wordpress_post_id',)
     search_fields = ('uuid', 'name', 'key',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'partner', 'key', 'name', 'marketing_url_path', 'description', 'homepage_url', 'logo_image_url',
+        'banner_image_url', 'certificate_logo_image_url', 'tags', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
+    )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(OrganizationAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting chapter [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='organization')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Subject)

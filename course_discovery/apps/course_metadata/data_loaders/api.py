@@ -4,6 +4,7 @@ import math
 import time
 from decimal import Decimal
 from io import BytesIO
+from django.utils.text import slugify
 
 import requests
 from django.core.files import File
@@ -55,6 +56,9 @@ class OrganizationsApiDataLoader(AbstractDataLoader):
             'key': key,
             'partner': self.partner,
             'certificate_logo_image_url': logo,
+            'name': body['name'],
+            'slug': slugify(body['name']),
+            'description': body['description'],
         }
 
         if not self.partner.has_marketing_site:
