@@ -125,30 +125,30 @@ class CourseRunAdmin(admin.ModelAdmin):
 @admin.register(Chapter)
 class ChapterAdmin(admin.ModelAdmin):
     form = ChapterAdminForm
-    list_display = ('uuid', 'title', 'location')
+    list_display = ('uuid', 'title', 'slug', 'course_order', 'location')
     list_filter = ('title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid',)
-    search_fields = ('uuid', 'title', 'location',)
+    search_fields = ('uuid', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort', 'slug', 'hidden'
+        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort', 'course_order', 'slug', 'hidden'
     )
 
 
 @admin.register(Sequential)
 class SequentialAdmin(admin.ModelAdmin):
     form = SequentialAdminForm
-    list_display = ('uuid', 'title', 'location',)
+    list_display = ('uuid', 'title', 'slug', 'chapter_order', 'location',)
     list_filter = ('title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid',)
-    search_fields = ('uuid', 'title', 'location',)
+    search_fields = ('uuid', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort', 'slug', 'hidden'
+        'uuid', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort', 'chapter_order', 'slug', 'hidden'
     )
 
 

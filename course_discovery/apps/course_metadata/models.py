@@ -925,8 +925,33 @@ class Chapter(TimeStampedModel):
     slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     hidden = models.BooleanField(default=False)
 
+    course_order = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text=_('Order presented within the course.'))
+
     def __str__(self):
         return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    def save(self, *args, **kwargs):
+        #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_publishable = (
+            # self.course.partner.has_marketing_site and
+            # waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            # Pop to clean the kwargs for the base class save call below
+            not suppress_publication
+        )
+
+        if is_publishable:
+            pass
+            # publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
+            # previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
+            #
+            with transaction.atomic():
+                super(Chapter, self).save(*args, **kwargs)
+            #     publisher.publish_obj(self, previous_obj=previous_obj)
+        else:
+            super(Chapter, self).save(*args, **kwargs)
 
 
 class Sequential(TimeStampedModel):
@@ -955,8 +980,32 @@ class Sequential(TimeStampedModel):
     slug = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     hidden = models.BooleanField(default=False)
 
+    chapter_order = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text=_('Order presented in the Chapter within the course.'))
+
     def __str__(self):
         return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    def save(self, *args, **kwargs):
+        #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_publishable = (
+            # self.course.partner.has_marketing_site and
+            # waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            # Pop to clean the kwargs for the base class save call below
+            not suppress_publication
+        )
+
+        if is_publishable:
+            # publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
+            # previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
+            #
+            with transaction.atomic():
+                super(Sequential, self).save(*args, **kwargs)
+            #     publisher.publish_obj(self, previous_obj=previous_obj)
+        else:
+            super(Sequential, self).save(*args, **kwargs)
 
 
 class Objective(TimeStampedModel):
