@@ -80,7 +80,7 @@ class CourseAdmin(admin.ModelAdmin):
 class CourseRunAdmin(admin.ModelAdmin):
     form = CourseRunAdminForm
     inlines = (SeatInline,)
-    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'key', 'title',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'key', 'title',)
     list_filter = (
         'course__partner',
         'hidden',
@@ -90,16 +90,16 @@ class CourseRunAdmin(admin.ModelAdmin):
     )
     ordering = ('key',)
     raw_id_fields = ('course',)
-    readonly_fields = ('uuid', 'wordpress_post_id')
+    readonly_fields = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort',)
     search_fields = ('uuid', 'wordpress_post_id', 'key', 'title_override', 'course__title', 'slug',)
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'course', 'key', 'status', 'title_override', 'start', 'end', 'enrollment_start', 'enrollment_end',
+        'course', 'key', 'status', 'title_override', 'start', 'end', 'enrollment_start', 'enrollment_end',
         'announcement', 'short_description_override', 'full_description_override', 'chapters', 'staff', 'min_effort',
         'max_effort', 'weeks_to_complete', 'language', 'transcript_languages', 'pacing_type', 'syllabus', 'card_image_url',
         'video', 'slug', 'hidden', 'mobile_available', 'course_overridden', 'reporting_type', 'eligible_for_financial_aid',
-        'tags', 'wordpress_post_id'
+        'tags', 'wordpress_post_id', 'uuid'
     )
 
     save_error = False
@@ -125,23 +125,23 @@ class CourseRunAdmin(admin.ModelAdmin):
 @admin.register(Chapter)
 class ChapterAdmin(admin.ModelAdmin):
     form = ChapterAdminForm
-    list_display = ('uuid', 'hidden', 'title', 'slug', 'course_order', 'location')
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'course_order', 'location')
     list_filter = ('hidden', 'title',)
     ordering = ('location', 'title',)
-    readonly_fields = ('uuid',)
+    readonly_fields = ('uuid', 'wordpress_post_id', 'min_effort', 'max_effort',)
     search_fields = ('uuid', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
-        'course_order', 'slug', 'hidden'
+        'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
+        'course_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
     )
 
 
 @admin.register(Sequential)
 class SequentialAdmin(admin.ModelAdmin):
     form = SequentialAdminForm
-    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'title', 'slug', 'chapter_order', 'location',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'chapter_order', 'location',)
     list_filter = ('hidden', 'title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid', 'course_run', 'wordpress_post_id',)
@@ -149,8 +149,8 @@ class SequentialAdmin(admin.ModelAdmin):
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'course_run', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
-        'chapter_order', 'slug', 'hidden', 'wordpress_post_id'
+        'course_run', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
+        'chapter_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
     )
 
 

@@ -1,4 +1,5 @@
 import datetime
+from datetime import timedelta
 import itertools
 import logging
 from collections import defaultdict
@@ -494,11 +495,13 @@ class CourseRun(TimeStampedModel):
     staff = SortedManyToManyField(Person, blank=True, related_name='courses_staffed')
     min_effort = models.DurationField(
         null=True, blank=True,
-        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter.'))
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number '
+                    'is calculated automatically by the Chapters added.'))
 
     max_effort = models.DurationField(
         null=True, blank=True,
-        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter.'))
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number '
+                    'is calculated automatically by the Chapters added.'))
     weeks_to_complete = models.PositiveSmallIntegerField(
         null=True, blank=True,
         help_text=_('Estimated number of weeks needed to complete this course run.'))
@@ -786,6 +789,18 @@ class CourseRun(TimeStampedModel):
     def __str__(self):
         return '{key}: {title}'.format(key=self.key, title=self.title)
 
+    def _calculate_effort_duration(self):
+        """ Loops through all related Chapter objects and updates the CourseRun `min_effort` and `max_effort` fields. """
+        self.min_effort = timedelta(hours=0, minutes=0, seconds=0)
+        self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
+
+        for chapter in self.chapters.all():
+            if chapter.min_effort:
+                self.min_effort = self.min_effort + chapter.min_effort
+
+            if chapter.max_effort:
+                self.max_effort = self.max_effort + chapter.max_effort
+
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
         switcher = {
@@ -811,6 +826,8 @@ class CourseRun(TimeStampedModel):
         )
 
         if is_publishable:
+            self._calculate_effort_duration()
+
             publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
             previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
 
@@ -915,11 +932,13 @@ class Chapter(TimeStampedModel):
     lms_web_url = models.URLField(null=True, blank=True)
     min_effort = models.DurationField(
         null=True, blank=True,
-        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter.'))
+        help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number'
+                    'is calculated automatically by the Sequentials added.'))
 
     max_effort = models.DurationField(
         null=True, blank=True,
-        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter.'))
+        help_text=_('Average number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number'
+                    'is calculated automatically by the Sequentials added.'))
 
     title = models.CharField(max_length=255, default=None, null=True, blank=True)
     goal_override = models.TextField(
@@ -938,6 +957,18 @@ class Chapter(TimeStampedModel):
 
     def __str__(self):
         return '{location}: {title}'.format(location=self.location, title=self.title)
+
+    def _calculate_effort_duration(self):
+        """ Loops through all related Sequential objects and updates the Chapter `min_effort` and `max_effort` fields. """
+        self.min_effort = timedelta(hours=0, minutes=0, seconds=0)
+        self.max_effort = timedelta(hours=0, minutes=0, seconds=0)
+
+        for sequential in self.sequentials.all():
+            if sequential.min_effort:
+                self.min_effort = self.min_effort + sequential.min_effort
+
+            if sequential.max_effort:
+                self.max_effort = self.max_effort + sequential.max_effort
 
     def _locate_publisher(self, partner):
         """ Locates the correct Marketing Service for the Partner"""
@@ -973,6 +1004,8 @@ class Chapter(TimeStampedModel):
         if is_publishable:
 
             with transaction.atomic():
+                self._calculate_effort_duration()
+
                 super(Chapter, self).save(*args, **kwargs)
 
                 # Need this `on_commit` to commit transaction to database so that the object provided within the
