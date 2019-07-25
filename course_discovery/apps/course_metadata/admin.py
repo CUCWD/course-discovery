@@ -95,7 +95,7 @@ class CourseRunAdmin(admin.ModelAdmin):
     )
     ordering = ('key',)
     raw_id_fields = ('course',)
-    readonly_fields = ('uuid', 'wordpress_post_id', 'min_effort', 'max_effort',)
+    readonly_fields = ('uuid', 'wordpress_post_id', 'min_effort', 'max_effort', 'tags',)
     search_fields = ('uuid', 'wordpress_post_id', 'key', 'title_override', 'course__title', 'slug',)
 
     # ordering the field display on admin page.
@@ -155,13 +155,13 @@ class ChapterAdmin(admin.ModelAdmin):
     list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'course_order', 'location')
     list_filter = ('hidden', 'status', 'title',)
     ordering = ('location', 'title',)
-    readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id', 'min_effort', 'max_effort',)
+    readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id', 'min_effort', 'max_effort', 'tags',)
     search_fields = ('uuid', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
         'course_run', 'location', 'status', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
-        'course_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
+        'course_order', 'slug', 'hidden', 'tags', 'wordpress_post_id', 'uuid'
     )
 
     actions = ['delete_selected']
@@ -212,7 +212,7 @@ class SequentialAdmin(admin.ModelAdmin):
     # ordering the field display on admin page.
     fields = (
         'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
-        'chapter_order', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
+        'chapter_order', 'slug', 'hidden', 'tags', 'wordpress_post_id', 'uuid'
     )
 
     actions = ['delete_selected']
@@ -249,6 +249,10 @@ class SequentialAdmin(admin.ModelAdmin):
 
             msg = PUBLICATION_FAILURE_MSG_TPL.format(model='sequential')  # pylint: disable=no-member
             messages.add_message(request, messages.ERROR, msg)
+
+    # def save_related(self, request, form, formsets, change):
+    #     super(SequentialAdmin, self).save_related(request, form, formsets, change)
+        # form.instance.tags.add('999')
 
 
 @admin.register(Objective)
