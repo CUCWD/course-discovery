@@ -796,7 +796,16 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         data['fields'][self.post_lookup_meta_group].update(
             {
                 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
-                'card_image_url': obj.card_image_url
+                'card_image_url': obj.card_image_url,
+                'pacing_type' : obj.pacing_type,
+                'mobile_available' : obj.mobile_available,
+                'invitation_only' : obj.invitation_only,
+                'course_start_date' : str(obj.start) if obj.start else '',
+                'course_end_date' : str(obj.end) if obj.end else '',
+                'enrollment_start_date' : str(obj.enrollment_start) if obj.enrollment_start else '',
+                'enrollment_end_date' : str(obj.enrollment_end) if obj.enrollment_end else '',
+                'language' : obj.language.code,
+                'transcript_languages' : [ language.code for language in obj.transcript_languages.all() ],
             })
 
 

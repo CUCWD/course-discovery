@@ -103,8 +103,8 @@ class CourseRunAdmin(admin.ModelAdmin):
         'course', 'key', 'status', 'title_override', 'start', 'end', 'enrollment_start', 'enrollment_end',
         'announcement', 'short_description_override', 'full_description_override', 'chapters', 'staff', 'min_effort',
         'max_effort', 'weeks_to_complete', 'language', 'transcript_languages', 'pacing_type', 'syllabus', 'card_image_url',
-        'video', 'slug', 'hidden', 'mobile_available', 'course_overridden', 'reporting_type', 'eligible_for_financial_aid',
-        'tags', 'wordpress_post_id', 'uuid'
+        'video', 'slug', 'hidden', 'invitation_only', 'mobile_available', 'course_overridden', 'reporting_type',
+        'eligible_for_financial_aid', 'tags', 'wordpress_post_id', 'uuid'
     )
 
     save_error = False
