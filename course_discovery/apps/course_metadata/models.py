@@ -26,7 +26,8 @@ from stdimage.utils import UploadToAutoSlug
 from taggit_autosuggest.managers import TaggableManager
 
 from course_discovery.apps.core.models import Currency, Partner
-from course_discovery.apps.course_metadata.choices import CourseRunPacing, CourseRunStatus, ProgramStatus, ReportingType
+from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, \
+    CourseRunPacing, CourseRunStatus, ProgramStatus, ReportingType
 from course_discovery.apps.course_metadata.publishers import (
     CourseRunMarketingSitePublisher, ProgramMarketingSitePublisher
 )
@@ -892,20 +893,18 @@ class CourseRun(TimeStampedModel):
 
         return publisher_class(partner)
 
-    def _publish_marketing(self):
-        publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
-        previous_obj = None #CourseRun.objects.get(id=self.id) if self.id else None
-
-        publisher.publish_obj(self, previous_obj=previous_obj)
-
     def save(self, *args, **kwargs):  # pylint: disable=arguments-differ
         suppress_publication = kwargs.pop('suppress_publication', False)
+        is_published = kwargs.pop('is_published', False)
         is_publishable = (
             self.course.partner.has_marketing_site and
             waffle.switch_is_active('publish_course_runs_to_marketing_site') and
             # Pop to clean the kwargs for the base class save call below
-            not suppress_publication
+            not suppress_publication and
+            not is_published
         )
+
+        self._calculate_effort_duration()
 
         if is_publishable:
 
@@ -914,16 +913,18 @@ class CourseRun(TimeStampedModel):
                 # let's make sure slug is defined
                 self.slug = slugify(self.title)
 
-            with transaction.atomic():
-                self._calculate_effort_duration()
-                
-                super(CourseRun, self).save(*args, **kwargs)
+            publisher = self._locate_publisher(self.course.partner)
+            previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
 
-                # Need this `on_commit` to commit transaction to database so that the object provided within the
-                # marketing publisher gets updates.
-                transaction.on_commit(self._publish_marketing)
+            with transaction.atomic():
+                super(CourseRun, self).save(*args, **kwargs)
+                publisher.publish_obj(self, previous_obj=previous_obj)
+
         else:
             logger.info('Course run [%s] is not publishable.', self.key)
+            if is_published:
+                self.status = CourseRunStatus.Published
+
             super(CourseRun, self).save(*args, **kwargs)
 
     def _delete_marketing(self):
@@ -1046,6 +1047,8 @@ class Chapter(TimeStampedModel):
         help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
     course_run = models.ForeignKey(CourseRun, related_name='chapters_accessor')
     location = models.CharField(max_length=255, unique=True)
+    status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=ChapterStatus.choices,
+                              validators=[ChapterStatus.validator])
     lms_web_url = models.URLField(null=True, blank=True)
     min_effort = models.DurationField(
         null=True, blank=True,
@@ -1104,47 +1107,47 @@ class Chapter(TimeStampedModel):
 
         return publisher_class(partner)
 
-    def _publish_marketing(self):
-        publisher = self._locate_publisher(self.course_run.course.partner)  # ChapterMarketingSitePublisher(self.course.partner)
-        previous_obj = None # Chapter.objects.get(id=self.id) if self.id else None
+    def save(self, *args, **kwargs):
+        #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_published = kwargs.pop('is_published', False)
+        is_publishable = (
+            self.course_run.course.partner.has_marketing_site and
+            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            # Pop to clean the kwargs for the base class save call below
+            not suppress_publication and
+            not is_published
+        )
 
-        publisher.publish_obj(self, previous_obj=previous_obj)
+        self._calculate_effort_duration()
+
+        if is_publishable:
+
+            publisher = self._locate_publisher(self.course_run.course.partner)
+            previous_obj = Chapter.objects.get(id=self.id) if self.id else None
+
+            with transaction.atomic():
+                super(Chapter, self).save(*args, **kwargs)
+                publisher.publish_obj(self, previous_obj=previous_obj)
+
+        else:
+            if is_published:
+                self.status = ChapterStatus.Published
+
+            super(Chapter, self).save(*args, **kwargs)
 
         # Update related CourseRun instances that include this Chapter, so that, the marketing frontend gets updated
         # at the CourseRun level with correct Chapter includes.
         for related_courseruns in self.course_runs.all():
             if related_courseruns:
-                related_courseruns.save(suppress_publication=True)
-
                 logger.info(
-                    "Saved related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
+                    "Saving related CourseRun `{}` {} since Chapter `{}` {} was updated.".format(
                         related_courseruns.title_override, related_courseruns.key, self.title, self.location
                     )
                 )
+                related_courseruns.status = CourseRunStatus.Unpublished
+                related_courseruns.save() # suppress_publication=True)
 
-    def save(self, *args, **kwargs):
-        #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
-        suppress_publication = kwargs.pop('suppress_publication', False)
-        is_publishable = (
-            self.course_run.course.partner.has_marketing_site and
-            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
-            # Pop to clean the kwargs for the base class save call below
-            not suppress_publication
-        )
-
-        if is_publishable:
-
-            with transaction.atomic():
-                self._calculate_effort_duration()
-
-                super(Chapter, self).save(*args, **kwargs)
-
-                # Need this `on_commit` to commit transaction to database so that the object provided within the
-                # marketing publisher gets updates.
-                transaction.on_commit(self._publish_marketing)
-
-        else:
-            super(Chapter, self).save(*args, **kwargs)
 
     def _delete_marketing(self):
         publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
@@ -1194,6 +1197,8 @@ class Sequential(TimeStampedModel):
         help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
     course_run = models.ForeignKey(CourseRun, related_name='sequentials_accessor')
     location = models.CharField(max_length=255, unique=True)
+    status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=SequentialStatus.choices,
+                              validators=[SequentialStatus.validator])
     lms_web_url = models.URLField(null=True, blank=True)
     min_effort = models.DurationField(
         null=True, blank=True,
@@ -1238,44 +1243,44 @@ class Sequential(TimeStampedModel):
 
         return publisher_class(partner)
 
-    def _publish_marketing(self):
-        publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)
-        previous_obj = None #Sequential.objects.get(id=self.id) if self.id else None
+    def save(self, *args, **kwargs):
+        suppress_publication = kwargs.pop('suppress_publication', False)
+        is_published = kwargs.pop('is_published', False)
+        is_publishable = (
+            self.course_run.course.partner.has_marketing_site and
+            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            # Pop to clean the kwargs for the base class save call below
+            not suppress_publication and
+            not is_published
+        )
 
-        publisher.publish_obj(self, previous_obj=previous_obj)
+        if is_publishable:
+
+            publisher = self._locate_publisher(self.course_run.course.partner)
+            previous_obj = Sequential.objects.get(id=self.id) if self.id else None
+
+            with transaction.atomic():
+                super(Sequential, self).save(*args, **kwargs)
+                publisher.publish_obj(self, previous_obj=previous_obj)
+
+        else:
+            if is_published:
+                self.status = SequentialStatus.Published
+
+            super(Sequential, self).save(*args, **kwargs)
 
         # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
         # at the Chapter level with correct Sequential includes.
         for related_chapter in self.chapters.all():
             if related_chapter:
-                related_chapter.save(suppress_publication=True)
-
                 logger.info(
-                    "Saved related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
+                    "Saving related Chapter `{}` {} since Sequential `{}` {} was updated.".format(
                         related_chapter.title, related_chapter.location, self.title, self.location
                     )
                 )
+                related_chapter.status = ChapterStatus.Unpublished
+                related_chapter.save() # suppress_publication=True)
 
-    def save(self, *args, **kwargs):
-        suppress_publication = kwargs.pop('suppress_publication', False)
-        is_publishable = (
-            self.course_run.course.partner.has_marketing_site and
-            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
-            # Pop to clean the kwargs for the base class save call below
-            not suppress_publication
-        )
-
-        if is_publishable:
-
-            with transaction.atomic():
-                super(Sequential, self).save(*args, **kwargs)
-
-                # Need this `on_commit` to commit transaction to database so that the object provided within the
-                # marketing publisher gets updates.
-                transaction.on_commit(self._publish_marketing)
-
-        else:
-            super(Sequential, self).save(*args, **kwargs)
 
     def _delete_marketing(self):
         publisher = self._locate_publisher(self.course_run.course.partner)  # SequentialMarketingSitePublisher(self.course.partner)

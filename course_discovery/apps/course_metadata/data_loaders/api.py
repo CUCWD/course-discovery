@@ -11,7 +11,7 @@ from django.core.files import File
 from opaque_keys.edx.keys import CourseKey
 
 from course_discovery.apps.core.models import Currency
-from course_discovery.apps.course_metadata.choices import CourseRunPacing, CourseRunStatus
+from course_discovery.apps.course_metadata.choices import SequentialStatus, ChapterStatus, CourseRunPacing, CourseRunStatus
 from course_discovery.apps.course_metadata.data_loaders import AbstractDataLoader
 from course_discovery.apps.course_metadata.models import (
     Course, CourseEntitlement, CourseRun, Chapter, Sequential, Organization, Program, ProgramType, Seat, SeatType, Video
@@ -289,8 +289,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
                         # We're only updating the courses children (Chapters) relationship on update assuming the
                         # course has already been created here.
                         if block_type == self.BLOCK_COURSE:
-                            if 'children' in block_body:
-                                self.update_course_chapters(block_type_model, block_body)
+                            self.update_course_chapters(block_type_model, block_body)
 
                     else:
                         logger.info('Could not find an existing %s', block_key)
@@ -356,7 +355,8 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'lms_web_url': block_body['lms_web_url'],
             'title': self.get_title_name(block_body['display_name']),
             'slug': self.get_slug_name(block_body['display_name'], course_id, block_body['block_id']),
-            'hidden': False
+            'hidden': False,
+            'status': SequentialStatus.Unpublished,
         }
 
         return defaults
@@ -364,6 +364,9 @@ class CoursesApiDataLoader(AbstractDataLoader):
     def _update_chapter_sequentials(self, chapter, block_body):
         sequentials = []
         chapter_order = 0
+
+        if 'children' not in block_body:
+            return
 
         for child in block_body['children']:
             sequentional_block_model = self.get_block_location(child, self.BLOCK_SEQUENTIAL)
@@ -378,16 +381,16 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
         # Assign the Sequentials from Block REST API to the Chapter model instance.
         if sequentials:
-            setattr(chapter, 'sequentials', sequentials)
-            chapter.save(suppress_publication=True)
+            chapter.sequentials = sequentials
+            chapter.status = ChapterStatus.Unpublished
+            chapter.save() # suppress_publication=True)
 
     def update_chapter(self, chapter, block_body, course_id):
         validated_data = self.format_chapter_data(block_body, course_id)
 
-        if 'children' in block_body:
-            self._update_chapter_sequentials(chapter, block_body)
-
         self._update_instance(chapter, validated_data) # , suppress_publication=True
+
+        self._update_chapter_sequentials(chapter, block_body)
 
         logger.info('Processed chapter with UUID [%s].', chapter.uuid)
 
@@ -398,7 +401,6 @@ class CoursesApiDataLoader(AbstractDataLoader):
 
         if chapter:
             self._update_chapter_sequentials(chapter, block_body)
-            chapter.save()
 
     def format_chapter_data(self, block_body, course_id):
         defaults = {
@@ -407,7 +409,8 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'lms_web_url': block_body['lms_web_url'],
             'title': self.get_title_name(block_body['display_name']),
             'slug': self.get_slug_name(block_body['display_name'], course_id, block_body['block_id']),
-            'hidden': False
+            'hidden': False,
+            'status': ChapterStatus.Unpublished,
         }
 
         return defaults
@@ -423,6 +426,9 @@ class CoursesApiDataLoader(AbstractDataLoader):
         chapters = []
         course_order = 0
 
+        if 'children' not in block_body:
+            return
+
         for child in block_body['children']:
             chapter_block_model = self.get_block_location(child, self.BLOCK_CHAPTER)
             if chapter_block_model:
@@ -435,8 +441,10 @@ class CoursesApiDataLoader(AbstractDataLoader):
                 chapters.append(chapter_block_model)
 
         # Assign the Chapters from Block REST API to the Course Run model instance.
+
         if chapters:
-            setattr(course_run, 'chapters', chapters)
+            course_run.chapters = chapters
+            course_run.status = CourseRunStatus.Unpublished
             course_run.save()  # suppress_publication=True
 
     def update_course_run(self, course_run, body):
@@ -509,7 +517,7 @@ class CoursesApiDataLoader(AbstractDataLoader):
             'short_description_override': body['short_description'],
             'full_description_override': self.api_client.courses(body['id']).get(username=self.username)["overview"],
             'video': self.get_courserun_video(body),
-            'status': CourseRunStatus.Published,
+            'status': CourseRunStatus.Unpublished,
             'pacing_type': self.get_pacing_type(body),
             'mobile_available': body.get('mobile_available') or False,
         })
