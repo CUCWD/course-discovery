@@ -235,6 +235,7 @@ class SimulationAdminForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super(SimulationAdminForm, self).__init__(*args, **kwargs)
+        self.fields['partner'].required = True
         self.fields['objectives'].required = False
         self.fields['sequentials'].required = False
 

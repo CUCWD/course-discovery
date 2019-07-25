@@ -271,20 +271,62 @@ class ObjectiveAdmin(admin.ModelAdmin):
     )
 
 
+@admin.register(SimulationMode)
+class SimulationMode(admin.ModelAdmin):
+    list_display = ('code', 'name', 'full_description_override')
+    ordering = ('code',)
+    search_fields = ('name', 'full_description_override')
+
+
 @admin.register(Simulation)
 class SimulationAdmin(admin.ModelAdmin):
     form = SimulationAdminForm
-    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'simulation_mode', 'location',)
-    list_filter = ('hidden', 'status', 'simulation_mode', 'title',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'location',)
+    list_filter = ('hidden', 'status', ('simulation_modes', admin.RelatedOnlyFieldListFilter,), 'title', 'partner',)
     ordering = ('location', 'title',)
     readonly_fields = ('location', 'slug', 'uuid', 'wordpress_post_id',)
     search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'location', 'status', 'title', 'full_description_override', 'objectives', 'sequentials', 'simulation_mode',
+        'partner', 'location', 'status', 'title', 'full_description_override', 'objectives', 'sequentials', 'simulation_modes',
         'min_effort', 'max_effort', 'mobile_available', 'hidden', 'slug', 'tags', 'wordpress_post_id', 'uuid'
     )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(SimulationAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+    save_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting simulation [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='simulation')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            obj.status = SimulationStatus.Unpublished
+            obj.save(is_published=False) #, is_child_update=True
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing simulation [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='simulation')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Program)
