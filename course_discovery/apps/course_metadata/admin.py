@@ -9,7 +9,8 @@ from course_discovery.apps.course_metadata.exceptions import (
     MarketingSiteAPIClientException, MarketingSitePublisherException
 )
 from course_discovery.apps.course_metadata.forms import (
-    CourseAdminForm, CourseRunAdminForm, ChapterAdminForm, SequentialAdminForm, ObjectiveAdminForm, ProgramAdminForm
+    CourseAdminForm, CourseRunAdminForm, ChapterAdminForm, SequentialAdminForm, ObjectiveAdminForm, SimulationAdminForm,
+    ProgramAdminForm
 )
 from course_discovery.apps.course_metadata.models import *  # pylint: disable=wildcard-import
 
@@ -267,6 +268,22 @@ class ObjectiveAdmin(admin.ModelAdmin):
     # ordering the field display on admin page.
     fields = (
         'uuid', 'description'
+    )
+
+
+@admin.register(Simulation)
+class SimulationAdmin(admin.ModelAdmin):
+    form = SimulationAdminForm
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'simulation_mode', 'location',)
+    list_filter = ('hidden', 'status', 'simulation_mode', 'title',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('location', 'slug', 'uuid', 'wordpress_post_id',)
+    search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'location', 'status', 'title', 'full_description_override', 'objectives', 'sequentials', 'simulation_mode',
+        'min_effort', 'max_effort', 'mobile_available', 'hidden', 'slug', 'tags', 'wordpress_post_id', 'uuid'
     )
 
 
