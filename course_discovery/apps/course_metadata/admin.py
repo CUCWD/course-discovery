@@ -133,22 +133,24 @@ class ChapterAdmin(admin.ModelAdmin):
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort', 'course_order', 'slug', 'hidden'
+        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
+        'course_order', 'slug', 'hidden'
     )
 
 
 @admin.register(Sequential)
 class SequentialAdmin(admin.ModelAdmin):
     form = SequentialAdminForm
-    list_display = ('uuid', 'title', 'slug', 'chapter_order', 'location',)
+    list_display = ('uuid', 'wordpress_post_id', 'title', 'slug', 'chapter_order', 'location',)
     list_filter = ('title',)
     ordering = ('location', 'title',)
-    readonly_fields = ('uuid',)
-    search_fields = ('uuid', 'title', 'slug', 'location',)
+    readonly_fields = ('uuid', 'course_run', 'wordpress_post_id',)
+    search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort', 'chapter_order', 'slug', 'hidden'
+        'uuid', 'course_run', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
+        'chapter_order', 'slug', 'hidden', 'wordpress_post_id'
     )
 
 

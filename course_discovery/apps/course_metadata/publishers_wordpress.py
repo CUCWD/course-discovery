@@ -11,11 +11,31 @@ from django.utils.text import slugify
 from course_discovery.apps.course_metadata.choices import CourseRunStatus
 from course_discovery.apps.course_metadata.exceptions import (
     AliasCreateError, AliasDeleteError, FormRetrievalError, NodeCreateError, NodeDeleteError, NodeEditError,
-    NodeLookupError, PostLookupError, PostEditError #, MediaLookupError, MediaCreateError
+    NodeLookupError, PostLookupError, PostCreateError, PostEditError #, MediaLookupError, MediaCreateError
 )
 from course_discovery.apps.course_metadata.utils import MarketingSiteWordpressAPIClient
 
 logger = logging.getLogger(__name__)
+
+
+"""
+Serialize the timedelta for effort send to frontend.
+https://stackoverflow.com/questions/8906926/formatting-python-timedelta-objects/17847006
+"""
+from string import Template
+
+class DeltaTemplate(Template):
+    delimiter = "%"
+
+def strfdelta(tdelta, fmt):
+    d = {"D": tdelta.days}
+    hours, rem = divmod(tdelta.seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    d["H"] = '{:02d}'.format(hours)
+    d["M"] = '{:02d}'.format(minutes)
+    d["S"] = '{:02d}'.format(seconds)
+    t = DeltaTemplate(fmt)
+    return t.substitute(**d)
 
 
 class BaseMarketingSiteWordpressPublisher:
@@ -45,13 +65,15 @@ class BaseMarketingSiteWordpressPublisher:
         self.rest_api_base = '{base}/wp/v2'.format(base=self.client.api_url) # urljoin(self.client.api_url, '/acf/v3/')
         self.media_api_base = '{base}/media'.format(base=self.rest_api_base)
         self.post_course_api_base = '{base}/course'.format(base=self.rest_api_base) #urljoin(self.rest_api_base, 'course')
+        self.post_lesson_api_base = '{base}/lesson'.format(base=self.rest_api_base)
         # self.node_api_base = urljoin(self.client.api_url, '/node.json')
         # self.alias_api_base = urljoin(self.client.api_url, '/admin/config/search/path')
         # self.alias_add_url = '{}/add'.format(self.alias_api_base)
 
         # Define the post_base based on publisher type
         switcher = {
-            "CourseRunMarketingSiteWordpressPublisher" : self.post_course_api_base
+            "CourseRunMarketingSiteWordpressPublisher" : self.post_course_api_base,
+            "SequentialMarketingSiteWordpressPublisher" : self.post_lesson_api_base
         }
         self.post_base = switcher.get(self.__class__.__name__, None)
 
@@ -125,6 +147,33 @@ class BaseMarketingSiteWordpressPublisher:
     #     #     raise NodeCreateError({'response_text': response.text, 'response_status': response.status_code})
     #     return None
     #
+    def create_post(self, post_data):
+        """
+        Create a Wordpress post.
+
+        Arguments:
+            post_data (dict): Data to POST to Wordpress for post creation.
+
+        Returns:
+            str: The ID of the created post.
+
+        Raises:
+            PostCreateError: If the POST to Wordpress fails.
+        """
+        post_url = '{base}'.format(base=self.post_base)
+        post_data = json.dumps(post_data)
+
+        response = self.client.api_session.post(post_url, data=post_data)
+
+        if response.status_code == 201:
+            return response.json()['id']
+        else:
+            raise PostCreateError(
+                {
+                    'response_text': response.text,
+                    'response_status': response.status_code
+                }
+            )
 
     def create_media(self, post_data):
         filename = post_data["filename"]
@@ -186,7 +235,7 @@ class BaseMarketingSiteWordpressPublisher:
 
     def post_id(self, obj):
         """
-        Find the ID of the post (Course) we want to publish to, if it exists.
+        Find the ID of the post (Course, Lesson) we want to publish to, if it exists.
 
         Arguments:
             obj (django.db.models.Model): Model instance to be published.
@@ -214,12 +263,17 @@ class BaseMarketingSiteWordpressPublisher:
             # Loop through all post checking to see if the open_edx_meta field group contains the same course_id.
             for post in response_json:
 
-                # Check to see if we have payload of course post types from ACF service.
-                if post['acf'] and post['acf'][self.post_lookup_meta_group].get(self.post_lookup_field) == getattr(obj, self.unique_field):
-                    obj.wordpress_post_id = post['id']
-                    obj.save()
+                try:
+                    # Check to see if we have payload of course post types from ACF service.
+                    if post['acf'] and post['acf'][self.post_lookup_meta_group].get(self.post_lookup_field) == getattr(obj, self.unique_field):
+                        obj.wordpress_post_id = post['id']
+                        obj.save()
 
-                    return obj.wordpress_post_id
+                        return obj.wordpress_post_id
+
+                except (KeyError) as error:
+                    raise PostLookupError({'response_status': 'Could not locate Wordpress post id',
+                                       obj.__class__: getattr(obj, self.unique_field)})
         else:
             raise PostLookupError({'response_status': 'Could not locate Wordpress post id for course', 'course_id': getattr(obj, self.unique_field)})
 
@@ -422,6 +476,85 @@ class BaseMarketingSiteWordpressPublisher:
     #
     #         if response.status_code != 200:
     #             raise AliasCreateError
+
+
+class SequentialMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):
+    """
+        Utility for publishing course run data to a Wordpress marketing site.
+        """
+    unique_field = 'location'
+    post_lookup_field = 'data_locator'
+    post_lookup_meta_group = 'open_edx_meta'
+
+    def publish_obj(self, obj, previous_obj=None):
+        """
+        Publish a Sequential to the marketing site.
+
+        Publication only occurs if the Sequential's status has changed.
+
+        Arguments:
+            obj (Sequential): Sequential instance to be published.
+
+        Keyword Arguments:
+            previous_obj (Sequential): Previous state of the sequential. Inspected to
+                determine if publication is necessary. May not exist if the course run
+                is being saved for the first time.
+        """
+        logger.info('Publishing lessons [%s] to marketing site (Wordpress) ...', obj.location)
+
+        # if previous_obj and obj.status != previous_obj.status:
+
+        post_data = self.serialize_obj(obj)
+
+        try:
+            post_id = self.post_id(obj)
+            self.edit_post(post_id, post_data)
+
+        except (PostLookupError) as error:
+            post_id = self.create_post(post_data)
+            if post_id:
+                logger.info('Created post [%d] on marketing site (Wordpress) ...', post_id)
+                obj.wordpress_post_id = post_id
+                obj.save(suppress_publication=True)
+
+    def serialize_obj(self, obj):
+        """
+        Serialize the Sequential instance to be published to Wordpress as custom post type 'lesson'.
+
+        Arguments:
+            obj (Sequential): Sequential instance to be published.
+
+        Returns:
+            dict: Data to PUT to the Wordpress API (/course)
+        """
+        data = super().serialize_obj(obj)
+        data['title'] = obj.title
+        data['slug'] = obj.slug
+        data['status'] = 'publish'
+
+        objectives = []
+        for objective in obj.objectives.all():
+            objectives.append({ "objective": objective.description })
+        data['fields']['objectives'] = objectives
+
+        data['fields'].setdefault('effort', {}).update(
+            {
+                'estimated_effort': strfdelta(obj.min_effort, '%H:%M:%S'),
+                'actual_effort': strfdelta(obj.max_effort, '%H:%M:%S')
+            }
+        )
+
+        data['fields'][self.post_lookup_meta_group].update(
+            {
+                # 'registration_url': "{base}/register?course_id={course_id}&enrollment_action=enroll".format(base=self.partner.lms_url, course_id=str(getattr(obj, self.unique_field))),
+                # 'card_image_url': obj.card_image_url
+                'lms_web_url': obj.lms_web_url
+            }
+        )
+
+        return {
+            **data,
+        }
 
 
 class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher):

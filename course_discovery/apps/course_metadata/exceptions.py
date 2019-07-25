@@ -47,6 +47,9 @@ class PersonToMarketingException(Exception):
 class PostLookupError(MarketingSitePublisherException):
     pass
 
+class PostCreateError(MarketingSitePublisherException):
+    pass
+
 class PostEditError(MarketingSitePublisherException):
     pass
 

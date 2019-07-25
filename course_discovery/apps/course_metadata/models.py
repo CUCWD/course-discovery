@@ -29,6 +29,7 @@ from course_discovery.apps.course_metadata.publishers import (
     CourseRunMarketingSitePublisher, ProgramMarketingSitePublisher
 )
 from course_discovery.apps.course_metadata.publishers_wordpress import (
+    SequentialMarketingSiteWordpressPublisher,
     CourseRunMarketingSiteWordpressPublisher,
     ProgramMarketingSiteWordpressPublisher
 )
@@ -956,8 +957,12 @@ class Chapter(TimeStampedModel):
 
 class Sequential(TimeStampedModel):
     """ Sequential model. """
-    location = models.CharField(max_length=255, unique=True)
     uuid = models.UUIDField(default=uuid4, editable=False, verbose_name=_('UUID'))
+    wordpress_post_id = models.BigIntegerField(
+        editable=False, null=True, blank=True,
+        help_text=_('This is the Wordpress Post id generated from the marketing frontend.'))
+    course_run = models.ForeignKey(CourseRun, related_name='sequentials')
+    location = models.CharField(max_length=255, unique=True)
     lms_web_url = models.URLField(null=True, blank=True)
     min_effort = models.DurationField(
         null=True, blank=True,
@@ -987,23 +992,45 @@ class Sequential(TimeStampedModel):
     def __str__(self):
         return '{location}: {title}'.format(location=self.location, title=self.title)
 
+    def _locate_publisher(self, partner):
+        """ Locates the correct Marketing Service for the Partner"""
+        switcher = {
+            "drupal": None,
+            "wordpress": SequentialMarketingSiteWordpressPublisher
+        }
+
+        publisher_class = switcher.get(partner.marketing_site_service.course_run_publisher)
+
+        # Throw error if the class for handling the Marketing Service is not defined in the code.
+        if publisher_class is None:
+            raise MarketingSitePublisherException("Cannot locate publisher for marketing site.")
+
+        return publisher_class(partner)
+
+    def publish_marketing(self):
+        publisher = self._locate_publisher(self.course_run.course.partner)  # CourseRunMarketingSitePublisher(self.course.partner)
+        previous_obj = Sequential.objects.get(id=self.id) if self.id else None
+
+        publisher.publish_obj(self, previous_obj=previous_obj)
+
     def save(self, *args, **kwargs):
         #Todo: Need to come back and update this for publishing to Wordpress frontend on save.
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_publishable = (
-            # self.course.partner.has_marketing_site and
-            # waffle.switch_is_active('publish_course_runs_to_marketing_site') and
+            self.course_run.course.partner.has_marketing_site and
+            waffle.switch_is_active('publish_course_runs_to_marketing_site') and
             # Pop to clean the kwargs for the base class save call below
             not suppress_publication
         )
 
         if is_publishable:
-            # publisher = self._locate_publisher(self.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
-            # previous_obj = CourseRun.objects.get(id=self.id) if self.id else None
-            #
+            # publisher = self._locate_publisher(self.course_run.course.partner) #CourseRunMarketingSitePublisher(self.course.partner)
+            # previous_obj = Sequential.objects.get(id=self.id) if self.id else None
+
             with transaction.atomic():
                 super(Sequential, self).save(*args, **kwargs)
-            #     publisher.publish_obj(self, previous_obj=previous_obj)
+                # publisher.publish_obj(self, previous_obj=previous_obj)
+                transaction.on_commit(self.publish_marketing)
         else:
             super(Sequential, self).save(*args, **kwargs)
 
