@@ -8,7 +8,7 @@ from parler.admin import TranslatableAdmin
 from course_discovery.apps.course_metadata.exceptions import (
     MarketingSiteAPIClientException, MarketingSitePublisherException
 )
-from course_discovery.apps.course_metadata.forms import CourseAdminForm, ProgramAdminForm
+from course_discovery.apps.course_metadata.forms import CourseAdminForm, CourseRunAdminForm, ProgramAdminForm
 from course_discovery.apps.course_metadata.models import *  # pylint: disable=wildcard-import
 
 PUBLICATION_FAILURE_MSG_TPL = _(
@@ -76,6 +76,7 @@ class CourseAdmin(admin.ModelAdmin):
 
 @admin.register(CourseRun)
 class CourseRunAdmin(admin.ModelAdmin):
+    form = CourseRunAdminForm
     inlines = (SeatInline,)
     list_display = ('uuid', 'wordpress_post_id', 'key', 'title',)
     list_filter = (
@@ -89,6 +90,16 @@ class CourseRunAdmin(admin.ModelAdmin):
     raw_id_fields = ('course',)
     readonly_fields = ('uuid', 'wordpress_post_id')
     search_fields = ('uuid', 'wordpress_post_id', 'key', 'title_override', 'course__title', 'slug',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'uuid', 'course', 'key', 'status', 'title_override', 'start', 'end', 'enrollment_start', 'enrollment_end',
+        'announcement', 'short_description_override', 'full_description_override', 'chapters', 'staff', 'min_effort',
+        'max_effort', 'weeks_to_complete', 'language', 'transcript_languages', 'pacing_type', 'syllabus', 'card_image_url',
+        'video', 'slug', 'hidden', 'mobile_available', 'course_overridden', 'reporting_type', 'eligible_for_financial_aid',
+        'tags', 'wordpress_post_id'
+    )
+
     save_error = False
 
     def response_change(self, request, obj):
@@ -107,6 +118,21 @@ class CourseRunAdmin(admin.ModelAdmin):
 
             msg = PUBLICATION_FAILURE_MSG_TPL.format(model='course run')  # pylint: disable=no-member
             messages.add_message(request, messages.ERROR, msg)
+
+
+@admin.register(Chapter)
+class ChapterAdmin(admin.ModelAdmin):
+    # form = ChapterAdminForm
+    list_display = ('uuid', 'location', 'title',)
+    list_filter = ('title',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('uuid',)
+    search_fields = ('uuid', 'location', 'title',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'min_effort', 'max_effort', 'slug', 'hidden'
+    )
 
 
 @admin.register(Program)

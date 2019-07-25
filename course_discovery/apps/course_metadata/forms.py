@@ -5,7 +5,7 @@ from django.forms.utils import ErrorList
 from django.utils.translation import ugettext_lazy as _
 
 from course_discovery.apps.course_metadata.choices import ProgramStatus
-from course_discovery.apps.course_metadata.models import Course, CourseRun, Program
+from course_discovery.apps.course_metadata.models import Course, CourseRun, Chapter, Program
 
 
 def filter_choices_to_render_with_order_preserved(self, selected_choices):
@@ -79,6 +79,30 @@ class ProgramAdminForm(forms.ModelForm):
             ))
 
         return self.cleaned_data
+
+
+class CourseRunAdminForm(forms.ModelForm):
+    class Meta:
+        model = CourseRun
+        fields = '__all__'
+
+        # Monkey patch filter_choices_to_render with our own definition which preserves ordering.
+        autocomplete.ModelSelect2Multiple.filter_choices_to_render = filter_choices_to_render_with_order_preserved
+
+        widgets = {
+            'chapters': autocomplete.ModelSelect2Multiple(
+                url='admin_metadata:chapter-autocomplete',
+                attrs={
+                    'data-minimum-input-length': 3,
+                    'class': 'sortable-select',
+                },
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(CourseRunAdminForm, self).__init__(*args, **kwargs)
+        self.fields['slug'].required = True
+        self.fields['chapters'].required = False
 
 
 class CourseRunSelectionForm(forms.ModelForm):
