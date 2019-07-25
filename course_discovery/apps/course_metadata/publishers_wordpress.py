@@ -624,6 +624,7 @@ class ChapterMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublisher
             except (PostLookupError) as error:
                 logger.info('Sequential post [%s] on marketing site (Wordpress) does not exist so cannot assign '
                             'to Chapter `[%s]` ...', sequential.location, obj.title)
+                continue
 
         data['fields']['module_lessons'] = sequentials
 
@@ -746,6 +747,7 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         data = super().serialize_obj(obj)
         data['title'] = obj.title
         data['slug'] = obj.slug
+        data['status'] = 'publish'
 
         # try:
         #     data['fields']['hero'] = self.media_id(obj)
@@ -756,6 +758,17 @@ class CourseRunMarketingSiteWordpressPublisher(BaseMarketingSiteWordpressPublish
         #     obj.wordpress_media_id = data['fields']['hero'] = self.create_media(self.serialize_media(obj))
         #     obj.save()
 
+        chapters = []
+        for chapter in obj.chapters.all():
+            try:
+                chapter_post_id = self.post_id(chapter)
+                chapters.append(chapter_post_id)
+            except (PostLookupError) as error:
+                logger.info('Chapter post [%s] on marketing site (Wordpress) does not exist so cannot assign '
+                            'to Course `[%s]` ...', chapter.location, obj.title)
+                continue
+
+        data['fields']['course_modules'] = chapters
 
         data['fields']['short_description'] = obj.short_description
         data['fields']['content_overview'] = obj.full_description
