@@ -8,7 +8,9 @@ from parler.admin import TranslatableAdmin
 from course_discovery.apps.course_metadata.exceptions import (
     MarketingSiteAPIClientException, MarketingSitePublisherException
 )
-from course_discovery.apps.course_metadata.forms import CourseAdminForm, CourseRunAdminForm, ProgramAdminForm
+from course_discovery.apps.course_metadata.forms import (
+    CourseAdminForm, CourseRunAdminForm, ChapterAdminForm, SequentialAdminForm, ObjectiveAdminForm, ProgramAdminForm
+)
 from course_discovery.apps.course_metadata.models import *  # pylint: disable=wildcard-import
 
 PUBLICATION_FAILURE_MSG_TPL = _(
@@ -122,16 +124,46 @@ class CourseRunAdmin(admin.ModelAdmin):
 
 @admin.register(Chapter)
 class ChapterAdmin(admin.ModelAdmin):
-    # form = ChapterAdminForm
-    list_display = ('uuid', 'location', 'title',)
+    form = ChapterAdminForm
+    list_display = ('uuid', 'title', 'location')
     list_filter = ('title',)
     ordering = ('location', 'title',)
     readonly_fields = ('uuid',)
-    search_fields = ('uuid', 'location', 'title',)
+    search_fields = ('uuid', 'title', 'location',)
 
     # ordering the field display on admin page.
     fields = (
-        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'min_effort', 'max_effort', 'slug', 'hidden'
+        'uuid', 'location', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort', 'slug', 'hidden'
+    )
+
+
+@admin.register(Sequential)
+class SequentialAdmin(admin.ModelAdmin):
+    form = SequentialAdminForm
+    list_display = ('uuid', 'title', 'location',)
+    list_filter = ('title',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('uuid',)
+    search_fields = ('uuid', 'title', 'location',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'uuid', 'location', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort', 'slug', 'hidden'
+    )
+
+
+@admin.register(Objective)
+class ObjectiveAdmin(admin.ModelAdmin):
+    form = ObjectiveAdminForm
+    list_display = ('uuid', 'description',)
+    list_filter = ('description',)
+    ordering = ('description',)
+    readonly_fields = ('uuid',)
+    search_fields = ('uuid', 'description',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'uuid', 'description'
     )
 
 
