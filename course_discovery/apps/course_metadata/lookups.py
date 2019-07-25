@@ -5,7 +5,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Q
 from django.template.loader import render_to_string
 
-from .models import Course, CourseRun, Chapter, Sequential, Objective, Organization, Person
+from .models import Course, CourseRun, Chapter, Sequential, Objective, Simulation, Organization, Person
 
 
 class CourseAutocomplete(autocomplete.Select2QuerySetView):
@@ -62,6 +62,18 @@ class ObjectiveAutocomplete(autocomplete.Select2QuerySetView):
             qs = Objective.objects.all()
             if self.q:
                 qs = qs.filter(Q(description__icontains=self.q))
+
+            return qs
+
+        return []
+
+
+class SimulationAutocomplete(autocomplete.Select2QuerySetView):
+    def get_queryset(self):
+        if self.request.user.is_authenticated() and self.request.user.is_staff:
+            qs = Simulation.objects.all()
+            if self.q:
+                qs = qs.filter(Q(location__icontains=self.q) | Q(title__icontains=self.q))
 
             return qs
 

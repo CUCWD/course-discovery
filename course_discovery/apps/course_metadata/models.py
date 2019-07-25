@@ -1255,7 +1255,8 @@ class Sequential(TimeStampedModel):
         help_text=_('Pick a tag from the suggestions. To make a new tag, add a comma after the tag name.'),
     )
 
-    objectives = SortedManyToManyField('Objective', related_name='sequentials')
+    objectives = SortedManyToManyField('Objective', related_name='sequential_objectives')
+    simulations = SortedManyToManyField('Simulation', related_name='sequential_simulations')
 
     """ 
     Todo: May want to consider adding in the additional fields provided by the Block REST API for this type.
@@ -1382,7 +1383,9 @@ class Objective(TimeStampedModel):
 
         # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
         # at the Chapter level with correct Sequential includes.
-        for related_sequential in self.sequentials.all():
+        # Todo: I'm not sure this ever gets executed because this is called only when we add a new Objective
+        # to a Sequential.
+        for related_sequential in self.sequential_objectives.all():
             if related_sequential:
                 related_sequential.save()
 
@@ -1488,6 +1491,7 @@ class Simulation(TimeStampedModel):
     def save(self, *args, **kwargs):
         suppress_publication = kwargs.pop('suppress_publication', False)
         is_published = kwargs.pop('is_published', False)
+        is_child_update = kwargs.pop('is_child_update', False)
         ignore_tag_creation = kwargs.pop('ignore_tag_creation', True)
 
         is_publishable = (
@@ -1515,6 +1519,20 @@ class Simulation(TimeStampedModel):
 
             super(Simulation, self).save(*args, **kwargs)
 
+        # Update related Sequential instances that include this Simulation, so that, the marketing frontend gets updated
+        # at the Sequential level with correct Simulation includes.
+        if is_child_update:
+            for related_sequential in self.sequential_simulations.all():
+                if related_sequential:
+                    logger.info(
+                        "Saving related Sequential `{}` {} since Simulation `{}` {} was updated.".format(
+                            related_sequential.title, related_sequential.location, self.title, self.location
+                        )
+                    )
+
+                    related_sequential.status = SequentialStatus.Unpublished
+                    related_sequential.save(is_child_update=False, ignore_tag_creation=ignore_tag_creation)  # suppress_publication=True)
+
     def _delete_marketing(self):
         publisher = self._locate_publisher(self.partner)  # SimulationMarketingSitePublisher(self.partner)
         publisher.delete_obj(self)
@@ -1533,9 +1551,9 @@ class Simulation(TimeStampedModel):
             with transaction.atomic():
                 # Update related Chapter instances that include this Sequential, so that, the marketing frontend gets updated
                 # at the Chapter level with correct Sequential includes. Here we are removing the sequential.
-                # for related_chapter in self.chapters.all():
-                #     if related_chapter:
-                #         related_chapter.sequentials.remove(self)
+                for related_sequential in self.sequential_simulations.all():
+                    if related_sequential:
+                        related_sequential.simulations.remove(self)
                     # related_chapter.save()
                     #
                     # logger.info(
@@ -1643,7 +1661,7 @@ def m2m_simulation_sequentials_changed(sender, **kwargs):
         )
 
         instance.status = SimulationStatus.Unpublished
-        instance.save(suppress_publication=False, is_published=False, ignore_tag_creation=True)
+        instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
 
 
 def m2m_simulation_modes_changed(sender, **kwargs):
@@ -1704,6 +1722,36 @@ def m2m_sequential_objectives_changed(sender, **kwargs):
 
         instance.status = SequentialStatus.Unpublished
         instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
+
+
+def m2m_sequential_simulations_changed(sender, **kwargs):
+    """
+    Update Sequential simulations on the publisher after Sequential.save() has been called.
+
+    m2m_changed event gets called after the model.save() is complete.
+    https://docs.djangoproject.com/en/2.1/ref/signals/#m2m-changed
+    """
+    action = kwargs.get('action')
+
+    # We only want to process after 'post_add' or 'post_remove' signals.
+    excluded_signals = ['pre_add', 'pre_remove', 'pre_clear', 'post_clear']
+    for signal in excluded_signals:
+        if signal == action:
+            return
+
+    instance = kwargs.get('instance')
+
+    if isinstance(instance, Sequential):
+
+        # Do something here.
+        logger.info(
+            "Simulations are being saved for Sequential `{}` {}.".format(
+                instance.location, instance.title
+            )
+        )
+
+        # instance.status = SequentialStatus.Unpublished
+        # instance.save(suppress_publication=False, is_published=False, is_child_update=True, ignore_tag_creation=True)
 
 
 def m2m_sequential_tags_changed(sender, **kwargs):
@@ -1802,6 +1850,7 @@ m2m_changed.connect(m2m_simulation_objectives_changed, sender=Simulation.objecti
 m2m_changed.connect(m2m_simulation_sequentials_changed, sender=Simulation.sequentials.through)
 m2m_changed.connect(m2m_simulation_modes_changed, sender=Simulation.simulation_modes.through)
 m2m_changed.connect(m2m_sequential_objectives_changed, sender=Sequential.objectives.through)
+m2m_changed.connect(m2m_sequential_simulations_changed, sender=Sequential.simulations.through);
 m2m_changed.connect(m2m_sequential_tags_changed, sender=Sequential.tags.through)
 m2m_changed.connect(m2m_chapter_sequentials_changed, sender=Chapter.sequentials.through)
 m2m_changed.connect(m2m_courserun_chapters_changed, sender=CourseRun.chapters.through)

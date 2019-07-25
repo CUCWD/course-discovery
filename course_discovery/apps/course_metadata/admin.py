@@ -212,7 +212,7 @@ class SequentialAdmin(admin.ModelAdmin):
 
     # ordering the field display on admin page.
     fields = (
-        'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'min_effort', 'max_effort',
+        'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'simulations', 'min_effort', 'max_effort',
         'chapter_order', 'slug', 'hidden', 'tags', 'wordpress_post_id', 'uuid'
     )
 
@@ -318,8 +318,8 @@ class SimulationAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         try:
-            obj.status = SimulationStatus.Unpublished
-            obj.save(is_published=False) #, is_child_update=True
+            # obj.status = SimulationStatus.Unpublished
+            obj.save(suppress_publication=True) #, is_child_update=True
         except (MarketingSitePublisherException, MarketingSiteAPIClientException):
             self.save_error = True
 
