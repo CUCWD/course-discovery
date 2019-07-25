@@ -5,7 +5,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.utils.translation import ugettext_lazy as _
 
 from course_discovery.apps.core.forms import UserThrottleRateForm
-from course_discovery.apps.core.models import Currency, Partner, User, UserThrottleRate
+from course_discovery.apps.core.models import Currency, Partner, MarketingService, User, UserThrottleRate
 
 
 @admin.register(User)
@@ -36,6 +36,13 @@ class CurrencyAdmin(admin.ModelAdmin):
     search_fields = ('code', 'name',)
 
 
+@admin.register(MarketingService)
+class MarketingServiceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'short_description', 'course_run_publisher')
+    ordering = ('name', 'short_description', 'course_run_publisher')
+    search_fields = ('name', 'short_description', 'course_run_publisher')
+
+
 @admin.register(Partner)
 class PartnerAdmin(admin.ModelAdmin):
     fieldsets = (
@@ -53,8 +60,8 @@ class PartnerAdmin(admin.ModelAdmin):
         }),
         (_('Marketing Site Configuration'), {
             'description': _('Configure the marketing site URLs that will be used to retrieve data and create URLs.'),
-            'fields': ('marketing_site_url_root', 'marketing_site_api_url', 'marketing_site_api_username',
-                       'marketing_site_api_password',)
+            'fields': ('marketing_site_service', 'marketing_site_url_root', 'marketing_site_api_url',
+                       'marketing_site_api_username', 'marketing_site_api_password',)
         }),
     )
     list_display = ('name', 'short_code', 'site')

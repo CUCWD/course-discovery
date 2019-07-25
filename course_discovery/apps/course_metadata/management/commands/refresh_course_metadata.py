@@ -137,14 +137,14 @@ class Command(BaseCommand):
             )
 
             pipeline = (
+                # (
+                #     (SubjectMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                #     (SchoolMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                #     (SponsorMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                #     (PersonMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                # ),
                 (
-                    (SubjectMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                    (SchoolMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                    (SponsorMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                    (PersonMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                ),
-                (
-                    (CourseMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                    # (CourseMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
                     (OrganizationsApiDataLoader, partner.organizations_api_url, max_workers),
                 ),
                 (
@@ -153,7 +153,7 @@ class Command(BaseCommand):
                 (
                     (EcommerceApiDataLoader, partner.ecommerce_api_url, 1),
                     (ProgramsApiDataLoader, partner.programs_api_url, max_workers),
-                ),
+                )
             )
 
             if waffle.switch_is_active('parallel_refresh_pipeline'):
