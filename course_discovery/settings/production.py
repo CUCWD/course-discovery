@@ -7,7 +7,7 @@ import yaml
 
 from course_discovery.settings.base import *
 
-DEBUG = False
+DEBUG = True
 TEMPLATE_DEBUG = DEBUG
 
 ALLOWED_HOSTS = ['*']
@@ -81,3 +81,5 @@ COMPRESS_CSS_FILTERS += [
 # Enable offline compression of CSS/JS
 COMPRESS_ENABLED = True
 COMPRESS_OFFLINE = True
+
+DEFAULT_PARTNER_ID = 1

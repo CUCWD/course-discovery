@@ -2,6 +2,21 @@ from django.utils.translation import ugettext_lazy as _
 from djchoices import ChoiceItem, DjangoChoices
 
 
+class SimulationStatus(DjangoChoices):
+    Published = ChoiceItem('published', _('Published'))
+    Unpublished = ChoiceItem('unpublished', _('Unpublished'))
+
+
+class SequentialStatus(DjangoChoices):
+    Published = ChoiceItem('published', _('Published'))
+    Unpublished = ChoiceItem('unpublished', _('Unpublished'))
+
+
+class ChapterStatus(DjangoChoices):
+    Published = ChoiceItem('published', _('Published'))
+    Unpublished = ChoiceItem('unpublished', _('Unpublished'))
+
+
 class CourseRunStatus(DjangoChoices):
     Published = ChoiceItem('published', _('Published'))
     Unpublished = ChoiceItem('unpublished', _('Unpublished'))

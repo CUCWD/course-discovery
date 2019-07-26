@@ -62,6 +62,12 @@ class Command(BaseCommand):
             default=None,
             help='The short code for a specific partner to refresh.'
         )
+        parser.add_argument(
+            '--courses',
+            dest='courses',
+            nargs='+',
+            help=u'Update `course-discovery` and marketing frontend for the list of courses provided.',
+        )
 
     def handle(self, *args, **options):
         # We only want to invalidate the API response cache once data loading
@@ -100,6 +106,9 @@ class Command(BaseCommand):
             username = jwt.decode(access_token, verify=False)['preferred_username']
             kwargs = {'username': username} if username else {}
 
+            course_keys = options['courses']
+            kwargs.update({'course_keys': course_keys}) if course_keys else {}
+
             # The Linux kernel implements copy-on-write when fork() is called to create a new
             # process. Pages that the parent and child processes share, such as the database
             # connection, are marked read-only. If a write is performed on a read-only page
@@ -137,23 +146,23 @@ class Command(BaseCommand):
             )
 
             pipeline = (
+                # (
+                #     (SubjectMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                #     (SchoolMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                #     (SponsorMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                #     (PersonMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                # ),
                 (
-                    (SubjectMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                    (SchoolMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                    (SponsorMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                    (PersonMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
-                ),
-                (
-                    (CourseMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
+                    # (CourseMarketingSiteDataLoader, partner.marketing_site_url_root, max_workers),
                     (OrganizationsApiDataLoader, partner.organizations_api_url, max_workers),
                 ),
                 (
                     (CoursesApiDataLoader, partner.courses_api_url, max_workers),
                 ),
-                (
-                    (EcommerceApiDataLoader, partner.ecommerce_api_url, 1),
-                    (ProgramsApiDataLoader, partner.programs_api_url, max_workers),
-                ),
+                # (
+                #     (EcommerceApiDataLoader, partner.ecommerce_api_url, 1),
+                #     (ProgramsApiDataLoader, partner.programs_api_url, max_workers),
+                # )
             )
 
             if waffle.switch_is_active('parallel_refresh_pipeline'):

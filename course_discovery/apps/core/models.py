@@ -1,6 +1,8 @@
 """ Core models. """
 import datetime
 
+import uuid
+
 from django.contrib.auth.models import AbstractUser
 from django.contrib.sites.models import Site
 from django.core.cache import cache
@@ -61,6 +63,20 @@ class Currency(models.Model):
         verbose_name_plural = 'Currencies'
 
 
+class MarketingService(TimeStampedModel):
+    name = models.CharField(max_length=128, unique=True, null=False, blank=False)
+    short_description = models.CharField(max_length=255, default=None, null=True, blank=True)
+    course_run_publisher = models.CharField(
+        max_length=15, unique=True, null=False, blank=False, verbose_name=_('Course Run Publisher'),
+        help_text=_('Used to identify publisher for the Partner (e.g. for CourseRunMarketingSitePublisher purposes.)'))
+
+    def __str__(self):
+        return '{name} - {code}'.format(name=self.name, code=self.course_run_publisher)
+
+    class Meta(object):
+        verbose_name_plural = 'Marketing Services'
+
+
 class Partner(TimeStampedModel):
     name = models.CharField(max_length=128, unique=True, null=False, blank=False)
     short_code = models.CharField(
@@ -71,6 +87,7 @@ class Partner(TimeStampedModel):
     organizations_api_url = models.URLField(max_length=255, null=True, blank=True,
                                             verbose_name=_('Organizations API URL'))
     programs_api_url = models.URLField(max_length=255, null=True, blank=True, verbose_name=_('Programs API URL'))
+    marketing_site_service = models.OneToOneField(MarketingService, null=True, blank=True, on_delete=models.PROTECT)
     marketing_site_api_url = models.URLField(max_length=255, null=True, blank=True,
                                              verbose_name=_('Marketing Site API URL'))
     marketing_site_url_root = models.URLField(max_length=255, null=True, blank=True,

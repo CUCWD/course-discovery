@@ -8,11 +8,19 @@ from parler.admin import TranslatableAdmin
 from course_discovery.apps.course_metadata.exceptions import (
     MarketingSiteAPIClientException, MarketingSitePublisherException
 )
-from course_discovery.apps.course_metadata.forms import CourseAdminForm, ProgramAdminForm
+from course_discovery.apps.course_metadata.forms import (
+    CourseAdminForm, CourseRunAdminForm, ChapterAdminForm, SequentialAdminForm, ObjectiveAdminForm, SimulationAdminForm,
+    ProgramAdminForm
+)
 from course_discovery.apps.course_metadata.models import *  # pylint: disable=wildcard-import
 
 PUBLICATION_FAILURE_MSG_TPL = _(
     'An error occurred while publishing the {model} to the marketing site. '
+    'Please try again. If the error persists, please contact the Engineering Team.'
+)
+
+DELETION_FAILURE_MSG_TPL = _(
+    'An error occurred while deleting the {model} from the marketing site. '
     'Please try again. If the error persists, please contact the Engineering Team.'
 )
 
@@ -76,8 +84,9 @@ class CourseAdmin(admin.ModelAdmin):
 
 @admin.register(CourseRun)
 class CourseRunAdmin(admin.ModelAdmin):
+    form = CourseRunAdminForm
     inlines = (SeatInline,)
-    list_display = ('uuid', 'key', 'title',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'key', 'title',)
     list_filter = (
         'course__partner',
         'hidden',
@@ -87,8 +96,18 @@ class CourseRunAdmin(admin.ModelAdmin):
     )
     ordering = ('key',)
     raw_id_fields = ('course',)
-    readonly_fields = ('uuid',)
-    search_fields = ('uuid', 'key', 'title_override', 'course__title', 'slug',)
+    readonly_fields = ('uuid', 'wordpress_post_id', 'min_effort', 'max_effort', 'tags',)
+    search_fields = ('uuid', 'wordpress_post_id', 'key', 'title_override', 'course__title', 'slug',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'course', 'key', 'status', 'title_override', 'start', 'end', 'enrollment_start', 'enrollment_end',
+        'announcement', 'short_description_override', 'full_description_override', 'chapters', 'staff', 'min_effort',
+        'max_effort', 'weeks_to_complete', 'language', 'transcript_languages', 'pacing_type', 'syllabus', 'card_image_url',
+        'video', 'slug', 'hidden', 'invitation_only', 'mobile_available', 'course_overridden', 'reporting_type',
+        'eligible_for_financial_aid', 'tags', 'wordpress_post_id', 'uuid'
+    )
+
     save_error = False
 
     def response_change(self, request, obj):
@@ -106,6 +125,207 @@ class CourseRunAdmin(admin.ModelAdmin):
             logger.exception('An error occurred while publishing course run [%s] to the marketing site.', obj.key)
 
             msg = PUBLICATION_FAILURE_MSG_TPL.format(model='course run')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(CourseRunAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting course run [%s] from the marketing site.',
+                                 obj.key)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='course run')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
+
+@admin.register(Chapter)
+class ChapterAdmin(admin.ModelAdmin):
+    form = ChapterAdminForm
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'course_order', 'location')
+    list_filter = ('hidden', 'status', 'title',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id', 'min_effort', 'max_effort', 'tags',)
+    search_fields = ('uuid', 'title', 'slug', 'location',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'course_run', 'location', 'status', 'title', 'lms_web_url', 'goal_override', 'sequentials', 'min_effort', 'max_effort',
+        'course_order', 'slug', 'hidden', 'tags', 'wordpress_post_id', 'uuid'
+    )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(ChapterAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+    save_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting chapter [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='chapter')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            obj.status = ChapterStatus.Unpublished
+            obj.save(is_published=False, is_child_update=True)
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing chapter [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='chapter')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
+
+
+@admin.register(Sequential)
+class SequentialAdmin(admin.ModelAdmin):
+    form = SequentialAdminForm
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'chapter_order', 'location',)
+    list_filter = ('hidden', 'status', 'title',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('uuid', 'course_run', 'location', 'wordpress_post_id',)
+    search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'course_run', 'location', 'status', 'title', 'lms_web_url', 'objectives', 'simulations', 'min_effort', 'max_effort',
+        'chapter_order', 'slug', 'hidden', 'tags', 'wordpress_post_id', 'uuid'
+    )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(SequentialAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+    save_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting sequential [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='sequential')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            obj.status = SequentialStatus.Unpublished
+            obj.save(is_published=False, is_child_update=True)
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing sequential [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='sequential')  # pylint: disable=no-member
+            messages.add_message(request, messages.ERROR, msg)
+
+    # def save_related(self, request, form, formsets, change):
+    #     super(SequentialAdmin, self).save_related(request, form, formsets, change)
+        # form.instance.tags.add('999')
+
+
+@admin.register(Objective)
+class ObjectiveAdmin(admin.ModelAdmin):
+    form = ObjectiveAdminForm
+    list_display = ('uuid', 'description',)
+    list_filter = ('description',)
+    ordering = ('description',)
+    readonly_fields = ('uuid',)
+    search_fields = ('uuid', 'description',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'uuid', 'description'
+    )
+
+
+@admin.register(SimulationMode)
+class SimulationMode(admin.ModelAdmin):
+    list_display = ('code', 'name', 'full_description_override')
+    ordering = ('code',)
+    search_fields = ('name', 'full_description_override')
+
+
+@admin.register(Simulation)
+class SimulationAdmin(admin.ModelAdmin):
+    form = SimulationAdminForm
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'min_effort', 'max_effort', 'title', 'slug', 'location',)
+    list_filter = ('hidden', 'status', ('simulation_modes', admin.RelatedOnlyFieldListFilter,), 'title', 'partner',)
+    ordering = ('location', 'title',)
+    readonly_fields = ('location', 'slug', 'uuid', 'wordpress_post_id',)
+    search_fields = ('uuid', 'wordpress_post_id', 'title', 'slug', 'location',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'partner', 'location', 'status', 'title', 'full_description_override', 'objectives', 'sequentials', 'simulation_modes',
+        'min_effort', 'max_effort', 'mobile_available', 'hidden', 'slug', 'tags', 'wordpress_post_id', 'uuid'
+    )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(SimulationAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+    save_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting simulation [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='simulation')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
+
+    def save_model(self, request, obj, form, change):
+        try:
+            # obj.status = SimulationStatus.Unpublished
+            obj.save(suppress_publication=True) #, is_child_update=True
+        except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+            self.save_error = True
+
+            logger.exception('An error occurred while publishing simulation [%s] to the marketing site.', obj.uuid)
+
+            msg = PUBLICATION_FAILURE_MSG_TPL.format(model='simulation')  # pylint: disable=no-member
             messages.add_message(request, messages.ERROR, msg)
 
 
@@ -218,11 +438,39 @@ class OrganizationUserRoleInline(admin.TabularInline):
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ('uuid', 'key', 'name',)
+    list_display = ('uuid', 'hidden', 'wordpress_post_id', 'key', 'name', 'slug',)
     inlines = [OrganizationUserRoleInline, ]
     list_filter = ('partner',)
-    readonly_fields = ('uuid',)
+    readonly_fields = ('uuid', 'wordpress_post_id',)
     search_fields = ('uuid', 'name', 'key',)
+
+    # ordering the field display on admin page.
+    fields = (
+        'partner', 'key', 'name', 'marketing_url_path', 'description', 'homepage_url', 'logo_image_url',
+        'banner_image_url', 'certificate_logo_image_url', 'tags', 'slug', 'hidden', 'wordpress_post_id', 'uuid'
+    )
+
+    actions = ['delete_selected']
+
+    def get_actions(self, request):
+        actions = super(OrganizationAdmin, self).get_actions(request)
+        # del actions['delete_selected']
+        return actions
+
+    delete_error = False
+
+    def delete_selected(self, request, obj):
+        for o in obj.all():
+            try:
+                o.delete()
+            except (MarketingSitePublisherException, MarketingSiteAPIClientException):
+                self.delete_error = True
+
+                logger.exception('An error occurred while deleting chapter [%s] from the marketing site.',
+                                 obj.location)
+
+                msg = DELETION_FAILURE_MSG_TPL.format(model='organization')  # pylint: disable=no-member
+                messages.add_message(request, messages.ERROR, msg)
 
 
 @admin.register(Subject)

@@ -6,6 +6,7 @@ class MarketingSitePublisherException(Exception):
     pass
 
 
+# Drupal Exceptions
 class AliasCreateError(MarketingSitePublisherException):
     pass
 
@@ -41,3 +42,25 @@ class PersonToMarketingException(Exception):
         super(PersonToMarketingException, self).__init__(message)
         suffix = 'The person data has not been saved. Please check your marketing site configuration'
         self.message = '{exception_msg} {suffix}'.format(exception_msg=message, suffix=suffix)
+
+# Wordpress Exceptions
+class PostLookupError(MarketingSitePublisherException):
+    pass
+
+class PostCreateError(MarketingSitePublisherException):
+    pass
+
+class PostEditError(MarketingSitePublisherException):
+    pass
+
+class PostDeleteError(MarketingSitePublisherException):
+    pass
+
+# class MediaLookupError(MarketingSitePublisherException):
+#     pass
+#
+# class MediaCreateError(MarketingSitePublisherException):
+#     pass
+
+class TagCreateError(MarketingSitePublisherException):
+    pass
