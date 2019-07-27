@@ -1066,7 +1066,7 @@ class Chapter(TimeStampedModel):
     location = models.CharField(max_length=255, unique=True)
     status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=ChapterStatus.choices,
                               validators=[ChapterStatus.validator])
-    lms_web_url = models.URLField(null=True, blank=True)
+    lms_web_url = models.URLField(null=True, blank=True, max_length=400)
     min_effort = models.DurationField(
         null=True, blank=True,
         help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this chapter. This number'
@@ -1239,7 +1239,7 @@ class Sequential(TimeStampedModel):
     location = models.CharField(max_length=255, unique=True)
     status = models.CharField(max_length=255, null=False, blank=False, db_index=True, choices=SequentialStatus.choices,
                               validators=[SequentialStatus.validator])
-    lms_web_url = models.URLField(null=True, blank=True)
+    lms_web_url = models.URLField(null=True, blank=True, max_length=400)
     min_effort = models.DurationField(
         null=True, blank=True,
         help_text=_('Estimated number of hours:minutes:seconds [hh:mm:ss] needed to complete this sequential.'))
